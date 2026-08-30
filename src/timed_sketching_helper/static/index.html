@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Timed Sketching Helper</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <!-- Start view -->
+      <section id="view-start" class="view">
+        <h1>Timed Sketching Helper</h1>
+        <form id="start-form">
+          <label>
+            Gallery or favourites URL
+            <input
+              id="url"
+              name="url"
+              type="url"
+              list="recent-urls"
+              placeholder="https://www.deviantart.com/user/gallery/all"
+              required
+            />
+            <datalist id="recent-urls"></datalist>
+          </label>
+          <div class="row">
+            <label>
+              Images
+              <input id="count" name="count" type="number" min="1" max="500" value="20" required />
+            </label>
+            <label>
+              Seconds per image
+              <input id="duration" name="duration" type="number" min="1" max="3600" value="90" required />
+            </label>
+          </div>
+          <button type="submit" id="start-btn">Start practice</button>
+        </form>
+        <p id="start-status" class="status" hidden></p>
+      </section>
+
+      <!-- Session view -->
+      <section id="view-session" class="view" hidden>
+        <div id="stage">
+          <img id="stage-img" alt="Reference image" />
+        </div>
+        <div id="hud">
+          <span id="progress">1 / 1</span>
+          <span id="timer">90</span>
+          <a id="page-link" href="#" target="_blank" rel="noreferrer">source ↗</a>
+        </div>
+        <div id="controls">
+          <button data-action="prev" title="Previous (←)">◀ Prev</button>
+          <button data-action="pause" title="Pause / resume (space)">Pause</button>
+          <button data-action="reroll" title="Swap for another random image (r)">⟳ Reroll</button>
+          <button data-action="skip" title="Skip (→)">Skip ▶</button>
+          <button data-action="end" title="End session">End</button>
+        </div>
+      </section>
+
+      <!-- Done view -->
+      <section id="view-done" class="view" hidden>
+        <h2>Session complete</h2>
+        <p id="done-summary"></p>
+        <div class="row">
+          <button id="again-btn">Same list again</button>
+          <button id="new-btn">New list</button>
+        </div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
