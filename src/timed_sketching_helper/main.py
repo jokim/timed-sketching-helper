@@ -18,6 +18,7 @@ from timed_sketching_helper.lists import get_list
 from timed_sketching_helper.sessions import build_session
 from timed_sketching_helper.sources.base import SourceProvider, UnknownSourceError
 from timed_sketching_helper.sources.deviantart import (
+    DeviantArtApiError,
     DeviantArtAuthError,
     DeviantArtProvider,
 )
@@ -85,9 +86,11 @@ def create_app(
 
     @app.exception_handler(DeviantArtAuthError)
     async def _auth_error(_request, exc):  # noqa: ANN001
-        return _json_error(
-            502, f"{exc} Check your DeviantArt credentials in .env."
-        )
+        return _json_error(502, str(exc))
+
+    @app.exception_handler(DeviantArtApiError)
+    async def _api_error(_request, exc):  # noqa: ANN001
+        return _json_error(502, str(exc))
 
     @app.get("/")
     async def index() -> FileResponse:

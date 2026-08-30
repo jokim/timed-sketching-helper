@@ -3,21 +3,45 @@
 from __future__ import annotations
 
 import time
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
 from timed_sketching_helper.models import ImageMeta, SourceRef
 
 API_BASE = "https://www.deviantart.com/api/v1/oauth2"
-TOKEN_URL = "https://www.deviantart.com/api/v1/oauth2/token"
-PAGE_LIMIT = 24
+# The OAuth2 token endpoint lives outside the /api/v1 tree (see
+# https://www.deviantart.com/developers/authentication).
+TOKEN_URL = "https://www.deviantart.com/oauth2/token"
+PAGE_LIMIT = 24  # the API's maximum
+FOLDER_PAGE_LIMIT = 50
 MAX_ITEMS = 2000
 USER_AGENT = "timed-sketching-helper/0.1 (personal drawing practice tool)"
 
 
 class DeviantArtAuthError(RuntimeError):
     """The DeviantArt API rejected our credentials."""
+
+
+class DeviantArtApiError(RuntimeError):
+    """The DeviantArt API returned an error for a request."""
+
+
+def _error_detail(response: httpx.Response) -> str:
+    # DeviantArt reports token-endpoint failures as a 3xx redirect to a
+    # /settings/applications/redirect_error page with the reason in the query.
+    if response.is_redirect:
+        query = parse_qs(urlparse(response.headers.get("location", "")).query)
+        parts = [
+            query[k][0] for k in ("error", "error_description") if query.get(k)
+        ]
+        return ": ".join(parts) if parts else f"HTTP {response.status_code} redirect"
+    try:
+        body = response.json()
+    except ValueError:
+        return f"HTTP {response.status_code}"
+    parts = [str(body[k]) for k in ("error", "error_description") if body.get(k)]
+    return ": ".join(parts) if parts else f"HTTP {response.status_code}"
 
 
 class DeviantArtProvider:
@@ -71,56 +95,104 @@ class DeviantArtProvider:
     # -- API access ---------------------------------------------------------
 
     async def list_images(self, ref: SourceRef) -> list[ImageMeta]:
+        endpoint = "gallery" if ref.kind == "gallery" else "collections"
         async with httpx.AsyncClient(
             timeout=30.0, headers={"User-Agent": USER_AGENT}
         ) as client:
-            folder_id = await self._resolve_folder_id(client, ref)
-            endpoint = "gallery" if ref.kind == "gallery" else "collections"
-            path = f"/{endpoint}/{folder_id or 'all'}"
+            folder_ids = await self._target_folder_ids(client, ref, endpoint)
 
             images: list[ImageMeta] = []
-            offset = 0
-            while len(images) < MAX_ITEMS:
-                payload = await self._get(
-                    client,
-                    path,
-                    params={
-                        "username": ref.username,
-                        "offset": offset,
-                        "limit": PAGE_LIMIT,
-                    },
-                )
-                for deviation in payload.get("results", []):
+            seen: set[str] = set()
+            for folder_id in folder_ids:
+                async for deviation in self._iter_folder(
+                    client, endpoint, folder_id, ref.username
+                ):
                     meta = _deviation_to_meta(deviation)
-                    if meta is not None:
+                    if meta is not None and meta.source_id not in seen:
+                        seen.add(meta.source_id)
                         images.append(meta)
-                if not payload.get("has_more"):
-                    break
-                next_offset = payload.get("next_offset")
-                if next_offset is None:
-                    break
-                offset = next_offset
+                    if len(images) >= MAX_ITEMS:
+                        return images
             return images
 
-    async def _resolve_folder_id(
-        self, client: httpx.AsyncClient, ref: SourceRef
-    ) -> str | None:
-        if ref.folder_id is None or ref.folder_id.isdigit():
-            return ref.folder_id
+    async def _target_folder_ids(
+        self, client: httpx.AsyncClient, ref: SourceRef, endpoint: str
+    ) -> list[str]:
+        if ref.folder_id and ref.folder_id.isdigit():
+            return [ref.folder_id]
+        if ref.folder_id:
+            return [await self._folder_id_by_name(client, endpoint, ref)]
+        # The URL targets the whole gallery / all favourites.
+        if endpoint == "gallery":
+            return ["all"]  # /gallery/all is a real endpoint
+        # There is no /collections/all, so aggregate every collection folder.
+        return await self._all_folder_ids(client, endpoint, ref.username)
 
-        endpoint = "gallery" if ref.kind == "gallery" else "collections"
-        payload = await self._get(
-            client,
-            f"/{endpoint}/folders",
-            params={"username": ref.username, "limit": 50},
-        )
+    async def _iter_folder(
+        self,
+        client: httpx.AsyncClient,
+        endpoint: str,
+        folder_id: str,
+        username: str,
+    ):
+        offset = 0
+        while True:
+            payload = await self._get(
+                client,
+                f"/{endpoint}/{folder_id}",
+                params={
+                    "username": username,
+                    "offset": offset,
+                    "limit": PAGE_LIMIT,
+                },
+            )
+            for deviation in payload.get("results", []):
+                yield deviation
+            if not payload.get("has_more"):
+                return
+            next_offset = payload.get("next_offset")
+            if next_offset is None:
+                return
+            offset = next_offset
+
+    async def _all_folder_ids(
+        self, client: httpx.AsyncClient, endpoint: str, username: str
+    ) -> list[str]:
+        return [f["folderid"] for f in await self._folders(client, endpoint, username)]
+
+    async def _folder_id_by_name(
+        self, client: httpx.AsyncClient, endpoint: str, ref: SourceRef
+    ) -> str:
         wanted = ref.folder_id.replace("-", " ").lower()
-        for folder in payload.get("results", []):
+        for folder in await self._folders(client, endpoint, ref.username):
             if folder.get("name", "").lower() == wanted:
                 return str(folder["folderid"])
-        raise ValueError(
+        raise DeviantArtApiError(
             f"DeviantArt {endpoint} folder not found: {ref.folder_id!r}"
         )
+
+    async def _folders(
+        self, client: httpx.AsyncClient, endpoint: str, username: str
+    ) -> list[dict]:
+        folders: list[dict] = []
+        offset = 0
+        while True:
+            payload = await self._get(
+                client,
+                f"/{endpoint}/folders",
+                params={
+                    "username": username,
+                    "offset": offset,
+                    "limit": FOLDER_PAGE_LIMIT,
+                },
+            )
+            folders.extend(payload.get("results", []))
+            if not payload.get("has_more"):
+                return folders
+            next_offset = payload.get("next_offset")
+            if next_offset is None:
+                return folders
+            offset = next_offset
 
     async def _get(
         self, client: httpx.AsyncClient, path: str, params: dict
@@ -140,7 +212,10 @@ class DeviantArtProvider:
                 params=request_params,
                 headers={"Authorization": f"Bearer {token}"},
             )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise DeviantArtApiError(
+                f"DeviantArt API request to {path} failed ({_error_detail(response)})."
+            )
         return response.json()
 
     async def _get_token(self, client: httpx.AsyncClient) -> str:
@@ -158,11 +233,12 @@ class DeviantArtProvider:
                 "client_secret": self._client_secret,
             },
         )
-        if response.status_code != 200:
+        data = response.json() if response.status_code == 200 else {}
+        if response.status_code != 200 or "access_token" not in data:
             raise DeviantArtAuthError(
-                f"DeviantArt token request failed ({response.status_code})."
+                f"DeviantArt token request failed ({_error_detail(response)}). "
+                "Check DEVIANTART_CLIENT_ID / DEVIANTART_CLIENT_SECRET in .env."
             )
-        data = response.json()
         self._token = data["access_token"]
         # Refresh a minute early to avoid races near expiry.
         self._token_expires_at = time.monotonic() + int(data.get("expires_in", 3600)) - 60
