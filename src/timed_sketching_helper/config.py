@@ -16,6 +16,19 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Never fetch more than this many images for a single list, whatever MAX_IMAGES
+# says. A session only ever shows a handful; a few hundred is plenty of variety.
+HARD_MAX_IMAGES = 1000
+
+
+def _as_max_images(value: str | None) -> int:
+    try:
+        n = int(value) if value is not None else HARD_MAX_IMAGES
+    except ValueError:
+        n = HARD_MAX_IMAGES
+    return max(1, min(n, HARD_MAX_IMAGES))
+
+
 @dataclass(frozen=True)
 class Config:
     deviantart_client_id: str
@@ -24,6 +37,7 @@ class Config:
     mature_content: bool
     data_dir: Path
     list_ttl_hours: int
+    max_images: int = HARD_MAX_IMAGES
 
     @property
     def db_path(self) -> Path:
@@ -51,6 +65,7 @@ def load_config() -> Config:
         mature_content=_as_bool(os.environ.get("DA_MATURE_CONTENT"), default=True),
         data_dir=data_dir,
         list_ttl_hours=int(os.environ.get("LIST_TTL_HOURS", "24")),
+        max_images=_as_max_images(os.environ.get("MAX_IMAGES")),
     )
 
 

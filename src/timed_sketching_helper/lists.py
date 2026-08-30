@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 
 from timed_sketching_helper import db
 from timed_sketching_helper.models import ImageList, ImageMeta
-from timed_sketching_helper.sources.base import SourceProvider, resolve
+from timed_sketching_helper.sources.base import (
+    ProgressCallback,
+    SourceProvider,
+    resolve,
+)
 
 
 def _is_fresh(fetched_at: str, ttl_hours: int) -> bool:
@@ -35,9 +39,11 @@ def _dedupe(images: list[ImageMeta]) -> list[ImageMeta]:
 def _title_for(ref) -> str:
     if ref.kind == "tag":
         return f"#{ref.tag}"
+    if ref.kind == "search":
+        return f'Search: "{ref.query}"'
     label = "favourites" if ref.kind == "favourites" else "gallery"
     if ref.folder_id:
-        return f"{ref.username} · {label} · {ref.folder_id}"
+        return f"{ref.username} · {label} · {ref.folder_slug or ref.folder_id}"
     return f"{ref.username} · {label}"
 
 
@@ -50,6 +56,7 @@ async def get_list(
     clear_image_cache: bool = False,
     ttl_hours: int = 24,
     resolver: Callable[[str], SourceProvider] = resolve,
+    on_progress: ProgressCallback | None = None,
 ) -> ImageList:
     provider = resolver(url)
     ref = provider.parse(url)
@@ -64,7 +71,7 @@ async def get_list(
         if cached is not None and cached.items:
             return cached
 
-    images = _dedupe(await provider.list_images(ref))
+    images = _dedupe(await provider.list_images(ref, on_progress=on_progress))
     if not images:
         raise ValueError(f"No images found for {url!r}.")
 

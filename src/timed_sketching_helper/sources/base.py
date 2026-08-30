@@ -8,9 +8,15 @@ the images behind it. Adding a site means adding one module that implements
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from timed_sketching_helper.models import ImageMeta, SourceRef
+
+# Called during a list fetch with (requests_completed, images_collected) so the
+# caller can show live progress. Fired once per upstream API request and once
+# per batch of newly collected images; the counts only ever increase.
+ProgressCallback = Callable[[int, int], None]
 
 
 class UnknownSourceError(ValueError):
@@ -25,7 +31,9 @@ class SourceProvider(Protocol):
 
     def parse(self, url: str) -> SourceRef: ...
 
-    async def list_images(self, ref: SourceRef) -> list[ImageMeta]: ...
+    async def list_images(
+        self, ref: SourceRef, *, on_progress: ProgressCallback | None = None
+    ) -> list[ImageMeta]: ...
 
 
 def _build_registry() -> list[SourceProvider]:

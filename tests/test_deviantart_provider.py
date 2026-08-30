@@ -99,6 +99,36 @@ async def test_list_images_follows_pagination():
 
 
 @respx.mock
+async def test_list_images_reports_progress_per_request():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "results": [_deviation("a"), _deviation("b")],
+                "has_more": True,
+                "next_offset": 2,
+            },
+        ),
+        httpx.Response(
+            200,
+            json={"results": [_deviation("c")], "has_more": False, "next_offset": None},
+        ),
+    ]
+
+    events: list[tuple[int, int]] = []
+    await DeviantArtProvider("id", "secret").list_images(
+        gallery_ref(),
+        on_progress=lambda requests, images: events.append((requests, images)),
+    )
+
+    assert events, "expected at least one progress report"
+    assert events[-1] == (2, 3)  # two API page requests, three images collected
+    assert [r for r, _ in events] == sorted(r for r, _ in events)  # never goes backwards
+
+
+@respx.mock
 async def test_list_images_fetches_tag_browse_with_pagination():
     _token_route(respx.mock)
     route = respx.mock.get(url__startswith=f"{API_BASE}/browse/tags")
@@ -126,6 +156,77 @@ async def test_list_images_fetches_tag_browse_with_pagination():
     assert [i.source_id for i in images] == ["a", "b", "c"]
     assert route.call_count == 2
     assert route.calls[0].request.url.params["tag"] == "hamster"
+
+
+def _page_by_offset(prefix="d"):
+    def handler(request):
+        off = int(request.url.params.get("offset", 0))
+        return httpx.Response(
+            200,
+            json={
+                "results": [_deviation(f"{prefix}{off + i}") for i in range(24)],
+                "has_more": True,
+                "next_offset": off + 24,
+            },
+        )
+
+    return handler
+
+
+@respx.mock
+async def test_list_images_stops_at_max_images_without_fetching_more_pages():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = _page_by_offset()
+
+    images = await DeviantArtProvider("id", "secret", max_images=50).list_images(
+        gallery_ref()
+    )
+
+    assert len(images) == 50
+    assert route.call_count == 3  # 24 + 24 + 2, then stop; page 4 never requested
+
+
+async def test_max_images_is_hard_capped_at_1000():
+    assert DeviantArtProvider("id", "secret", max_images=99999)._max_images == 1000
+    assert DeviantArtProvider("id", "secret")._max_images == 1000
+
+
+def search_ref(query="posing"):
+    return SourceRef(
+        provider="deviantart",
+        kind="search",
+        username="",
+        folder_id=None,
+        raw_url=f"https://www.deviantart.com/search?q={query}",
+        query=query,
+    )
+
+
+@respx.mock
+async def test_list_images_fetches_search_query_via_browse_home():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/browse/home")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "results": [_deviation("a"), _deviation("b")],
+                "has_more": True,
+                "next_offset": 2,
+            },
+        ),
+        httpx.Response(
+            200,
+            json={"results": [_deviation("c")], "has_more": False, "next_offset": None},
+        ),
+    ]
+
+    images = await DeviantArtProvider("id", "secret").list_images(search_ref("posing"))
+
+    assert [i.source_id for i in images] == ["a", "b", "c"]
+    assert route.call_count == 2
+    assert route.calls[0].request.url.params["q"] == "posing"
 
 
 @respx.mock
@@ -196,6 +297,48 @@ async def test_list_images_resolves_favourites_folder_name_to_id():
         username="artist",
         folder_id="cool-refs",
         raw_url="https://www.deviantart.com/artist/favourites/cool-refs",
+    )
+    images = await DeviantArtProvider("id", "secret").list_images(ref)
+
+    assert folders.called
+    assert contents.called
+    assert [i.source_id for i in images] == ["a"]
+
+
+@respx.mock
+async def test_list_images_resolves_numeric_url_folder_id_via_name_slug():
+    # deviantart.com/<user>/favourites/<legacy numeric id>/<name-slug>: the API
+    # only accepts UUID folderids, so the numeric id must be resolved through
+    # the folder listing by matching the URL's trailing name slug.
+    _token_route(respx.mock)
+    folders = respx.mock.get(url__startswith=f"{API_BASE}/collections/folders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"folderid": "7BE985EE-FBDD-B030-80A8-27AC6C590CBD",
+                     "name": "Model Stocks"},
+                    {"folderid": "0D62C448-0422-34F1-78DC-89D94ABE6D5F",
+                     "name": "Brushes"},
+                ]
+            },
+        )
+    )
+    contents = respx.mock.get(
+        url__startswith=f"{API_BASE}/collections/7BE985EE-FBDD-B030-80A8-27AC6C590CBD"
+    ).mock(
+        return_value=httpx.Response(
+            200, json={"results": [_deviation("a")], "has_more": False}
+        )
+    )
+
+    ref = SourceRef(
+        provider="deviantart",
+        kind="favourites",
+        username="artist",
+        folder_id="61706897",
+        raw_url="https://www.deviantart.com/artist/favourites/61706897/model-stocks",
+        folder_slug="model-stocks",
     )
     images = await DeviantArtProvider("id", "secret").list_images(ref)
 
@@ -363,3 +506,120 @@ async def test_api_error_surfaces_deviantart_detail():
 
     with pytest.raises(DeviantArtApiError, match="user not found"):
         await DeviantArtProvider("id", "secret").list_images(gallery_ref())
+
+
+_WIXMP = "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com"
+
+
+@pytest.mark.parametrize(
+    "src, blurred",
+    [
+        (
+            f"{_WIXMP}/f/u/d.jpg/v1/fill/w_545,h_800,q_75,strp,blur_34/"
+            "x_by_a_d-fullview.jpg?token=a.b.c",
+            True,
+        ),
+        (
+            f"{_WIXMP}/f/u/d.jpg/v1/fill/w_900,h_900,q_80,strp/"
+            "x_by_a_d-fullview.jpg?token=a.b.c",
+            False,
+        ),
+        (f"{_WIXMP}/f/u/d.png?token=a.b.c", False),
+        # "blur" in the trailing pretty filename must not count as a transform
+        (
+            f"{_WIXMP}/f/u/d.jpg/v1/fill/w_900,h_900,q_80,strp/"
+            "motion_blur_study_by_a_d-fullview.jpg?token=a.b.c",
+            False,
+        ),
+    ],
+)
+def test_is_blurred_src(src, blurred):
+    from timed_sketching_helper.sources.deviantart import _is_blurred_src
+
+    assert _is_blurred_src(src) is blurred
+
+
+def _blurred_deviation(devid):
+    """A deviation whose content.src is a blurred rendition — what DeviantArt
+    hands back for a sensitive deviation the current viewer may not see."""
+    d = _deviation(devid)
+    d["is_mature"] = True
+    d["content"]["src"] = (
+        f"{_WIXMP}/f/uuid/{devid}.jpg/v1/fill/w_545,h_800,q_75,strp,blur_34/"
+        f"pretty_by_artist_{devid}-fullview.jpg?token=abc.def.ghi"
+    )
+    return d
+
+
+def _clear_mature_deviation(devid):
+    """A mature deviation the viewer *can* see — src carries no blur transform."""
+    d = _deviation(devid)
+    d["is_mature"] = True
+    d["content"]["src"] = (
+        f"{_WIXMP}/f/uuid/{devid}.jpg/v1/fill/w_900,h_900,q_80,strp/"
+        f"pretty_by_artist_{devid}-fullview.jpg?token=abc.def.ghi"
+    )
+    return d
+
+
+@respx.mock
+async def test_list_images_drops_deviations_with_a_blurred_source():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [_deviation("clear"), _blurred_deviation("hidden")],
+                "has_more": False,
+            },
+        )
+    )
+
+    images = await DeviantArtProvider("id", "secret").list_images(gallery_ref())
+
+    assert [i.source_id for i in images] == ["clear"]
+    assert route.calls[0].request.url.params["mature_content"] == "false"
+
+
+@respx.mock
+async def test_list_images_keeps_blurred_deviations_out_even_when_logged_in():
+    # A logged-in account with mature content disabled still gets blurred
+    # renditions back from DeviantArt — they must not reach the session.
+    async def user_token(*, force=False):
+        return "user-tok"
+
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(
+            200,
+            json={"results": [_blurred_deviation("hidden")], "has_more": False},
+        )
+    )
+
+    images = await DeviantArtProvider(
+        "id", "secret", user_token=user_token
+    ).list_images(gallery_ref())
+
+    assert images == []
+
+
+@respx.mock
+async def test_list_images_keeps_viewable_mature_content_for_logged_in_user():
+    async def user_token(*, force=False):
+        return "user-tok"
+
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [_clear_mature_deviation("visible")],
+                "has_more": False,
+            },
+        )
+    )
+
+    images = await DeviantArtProvider(
+        "id", "secret", user_token=user_token
+    ).list_images(gallery_ref())
+
+    assert [i.source_id for i in images] == ["visible"]
+    assert route.calls[0].request.url.params["mature_content"] == "true"

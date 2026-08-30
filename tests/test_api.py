@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import respx
@@ -27,7 +29,10 @@ class FakeProvider:
     def parse(self, url):
         return SourceRef("deviantart", "gallery", "artist", None, url)
 
-    async def list_images(self, ref):
+    async def list_images(self, ref, *, on_progress=None):
+        for n, _ in enumerate(self.images, start=1):
+            if on_progress:
+                on_progress(n, n)
         return list(self.images)
 
 
@@ -176,6 +181,47 @@ def test_create_list_then_read_and_recent(client):
     assert recent[0]["url"] == GALLERY_URL
 
 
+def _stream_lines(client, url):
+    with client.stream(
+        "POST",
+        "/api/lists",
+        json={"url": url},
+        headers={"Accept": "application/x-ndjson"},
+    ) as res:
+        assert res.status_code == 200
+        return [json.loads(line) for line in res.iter_lines() if line.strip()]
+
+
+def test_create_list_streams_progress_then_result(client):
+    messages = _stream_lines(client, GALLERY_URL)
+
+    types = [m["type"] for m in messages]
+    assert "progress" in types
+    assert types[-1] == "result"
+
+    result = messages[-1]
+    assert result["count"] == 3
+    assert "list_id" in result
+    assert result["thumb"] == "a"  # first image, for the saved-list icon
+
+    requests = [m["requests"] for m in messages if m["type"] == "progress"]
+    assert requests == sorted(requests)  # monotonic, never resets
+
+
+def test_create_list_stream_emits_error_line_for_unknown_url(client):
+    messages = _stream_lines(client, "https://example.com/whatever")
+
+    assert messages[-1]["type"] == "error"
+    assert messages[-1]["error"]
+
+
+def test_create_list_without_stream_accept_still_returns_json(client):
+    body = client.post("/api/lists", json={"url": GALLERY_URL}).json()
+    assert body["count"] == 3
+    assert "list_id" in body
+    assert body["thumb"] == "a"
+
+
 @respx.mock
 def test_create_session_partitions_items(client):
     respx.mock.get(url__startswith="https://img.example/").mock(
@@ -286,7 +332,7 @@ class RotatingProvider:
     def parse(self, url):
         return SourceRef("deviantart", "gallery", "artist", None, url)
 
-    async def list_images(self, ref):
+    async def list_images(self, ref, *, on_progress=None):
         self.calls += 1
         return [
             ImageMeta(

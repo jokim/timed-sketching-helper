@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
 import sqlite3
@@ -10,7 +11,12 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -59,6 +65,7 @@ def _default_resolver(cfg: Config, user_token=None):
         cfg.deviantart_client_id,
         cfg.deviantart_client_secret,
         user_token=user_token,
+        max_images=cfg.max_images,
     )
 
     def resolver(url: str) -> SourceProvider:
@@ -179,8 +186,7 @@ def create_app(
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
-    @app.post("/api/lists")
-    async def create_list(body: ListRequest) -> dict:
+    async def _fetch_list(body: ListRequest, on_progress=None):
         image_list = await get_list(
             conn,
             db.current_account(),
@@ -189,6 +195,7 @@ def create_app(
             clear_image_cache=body.force_refresh,
             ttl_hours=cfg.list_ttl_hours,
             resolver=resolver,
+            on_progress=on_progress,
         )
         return {
             "list_id": image_list.id,
@@ -196,7 +203,56 @@ def create_app(
             "kind": image_list.kind,
             "count": len(image_list.items),
             "fetched_at": image_list.fetched_at,
+            # First image, used as the saved-list icon in the browser.
+            "thumb": image_list.items[0].source_id if image_list.items else None,
         }
+
+    @app.post("/api/lists")
+    async def create_list(body: ListRequest, request: Request):
+        wants_stream = "application/x-ndjson" in request.headers.get("accept", "")
+        if not wants_stream:
+            return await _fetch_list(body)
+
+        # The fetch runs as its own task; progress callbacks (fired synchronously
+        # from inside the provider) drop messages onto a queue that the response
+        # generator drains and streams out as newline-delimited JSON.
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def on_progress(requests: int, images: int) -> None:
+            queue.put_nowait(
+                {"type": "progress", "requests": requests, "images": images}
+            )
+
+        async def run() -> None:
+            try:
+                result = await _fetch_list(body, on_progress)
+                await queue.put({"type": "result", **result})
+            except (UnknownSourceError, ValueError) as exc:
+                await queue.put({"type": "error", "error": str(exc)})
+            except (DeviantArtAuthError, DeviantArtApiError) as exc:
+                await queue.put({"type": "error", "error": str(exc)})
+            except Exception:  # noqa: BLE001 - headers are already sent
+                logger.exception("List fetch failed mid-stream")
+                await queue.put(
+                    {"type": "error", "error": "Fetching the list failed."}
+                )
+            finally:
+                await queue.put(None)
+
+        async def body_stream():
+            task = asyncio.create_task(run())
+            try:
+                while True:
+                    message = await queue.get()
+                    if message is None:
+                        return
+                    yield json.dumps(message) + "\n"
+            finally:
+                await task
+
+        return StreamingResponse(
+            body_stream(), media_type="application/x-ndjson"
+        )
 
     @app.get("/api/lists/{list_id}")
     async def read_list(list_id: int) -> dict:

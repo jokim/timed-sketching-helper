@@ -25,12 +25,13 @@ DEVIANTART_CLIENT_SECRET=your-secret
 
 ### Sensitive / mature content
 
-By default the app talks to DeviantArt anonymously (client-credentials), and
-DeviantArt serves *blurred* images for anything marked mature or sensitive. To
-see them un-blurred, click **Connect DeviantArt** on the start screen and log in
-with an account that has mature content enabled in its settings. For lists you
-already fetched while logged out, tick **Re-download images** when starting the
-next session so the blurred copies are replaced.
+Images DeviantArt marks mature or sensitive come back *blurred* unless you're
+signed in with an account allowed to see them. Blurred images are useless as
+references, so the app drops them — they never appear in a list or session. To
+include sensitive images, click **Connect DeviantArt** on the start screen and
+log in with an account that has mature content enabled in its settings. Lists
+you already fetched keep their old contents until they expire (24h) or you tick
+**Re-download images** when starting the next session.
 
 ## Run
 
@@ -58,6 +59,8 @@ During a session: **Pause** (space), **Prev** (←), **Skip** (→),
 - Fetched lists and downloaded image bytes are cached under `./data/`
   (`app.db` + `cache/`). A list older than `LIST_TTL_HOURS` (24 by default) is
   re-fetched.
+- A list fetch stops at `MAX_IMAGES` deviations (1000 by default, and the hard
+  ceiling) — a session only ever shows a handful.
 - Starting a session no longer waits for the whole gallery to download: each
   image is fetched the first time it's shown, and the session's images are
   pre-downloaded in the background. If a signed image link has expired by the

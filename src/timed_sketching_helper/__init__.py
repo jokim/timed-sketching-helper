@@ -18,9 +18,9 @@ _EPILOG = """\
 configuration:
   Runtime settings are read from a .env file in the working directory
   (see .env.example). DeviantArt image fetching needs DEVIANTART_CLIENT_ID
-  and DEVIANTART_CLIENT_SECRET from your DeviantArt app page. For unblurred
-  mature/sensitive images, authorise a logged-in account via the app's
-  /auth/deviantart/login route.
+  and DEVIANTART_CLIENT_SECRET from your DeviantArt app page. Sensitive /
+  mature images are skipped unless you authorise a logged-in account (with
+  mature content enabled) via the app's /auth/deviantart/login route.
 
 data:
   Downloaded images and the SQLite cache live in ./data/ (safe to delete).

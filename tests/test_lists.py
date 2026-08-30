@@ -20,8 +20,10 @@ class FakeProvider:
     def parse(self, url):
         return SourceRef("deviantart", "gallery", "artist", None, url)
 
-    async def list_images(self, ref):
+    async def list_images(self, ref, *, on_progress=None):
         self.calls += 1
+        if on_progress:
+            on_progress(1, len(self.images))
         return list(self.images)
 
 
@@ -37,6 +39,23 @@ def meta(source_id):
 
 def resolver_for(provider):
     return lambda url: provider
+
+
+def test_title_for_folder_prefers_the_name_slug_over_the_numeric_id():
+    ref = SourceRef(
+        "deviantart", "favourites", "artist", "61706897",
+        "https://www.deviantart.com/artist/favourites/61706897/model-stocks",
+        folder_slug="model-stocks",
+    )
+    assert _title_for(ref) == "artist · favourites · model-stocks"
+
+
+def test_title_for_search():
+    ref = SourceRef(
+        "deviantart", "search", "", None,
+        "https://www.deviantart.com/search?q=posing", query="posing",
+    )
+    assert _title_for(ref) == 'Search: "posing"'
 
 
 def test_title_for_tag():
@@ -137,6 +156,37 @@ async def test_get_list_does_not_download_image_bytes(conn):
 
     assert db_module.get_cache_entry(conn, "a") is None
     assert db_module.get_cache_entry(conn, "b") is None
+
+
+async def test_get_list_forwards_progress_from_provider(conn):
+    provider = FakeProvider([meta("a"), meta("b")])
+    events: list[tuple[int, int]] = []
+
+    await get_list(
+        conn,
+        ACCOUNT,
+        URL,
+        resolver=resolver_for(provider),
+        on_progress=lambda requests, images: events.append((requests, images)),
+    )
+
+    assert events == [(1, 2)]
+
+
+async def test_get_list_cache_hit_reports_no_progress(conn):
+    provider = FakeProvider([meta("a")])
+    await get_list(conn, ACCOUNT, URL, resolver=resolver_for(provider))
+    events: list[tuple[int, int]] = []
+
+    await get_list(
+        conn,
+        ACCOUNT,
+        URL,
+        resolver=resolver_for(provider),
+        on_progress=lambda requests, images: events.append((requests, images)),
+    )
+
+    assert events == []
 
 
 async def test_empty_list_raises(conn):

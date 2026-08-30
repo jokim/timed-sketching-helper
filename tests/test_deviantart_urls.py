@@ -58,6 +58,20 @@ def test_parses_supported_url_shapes(provider, url, kind, username, folder_id):
     assert ref.raw_url == url
 
 
+def test_parses_folder_url_keeps_the_name_slug(provider):
+    ref = provider.parse(
+        "https://www.deviantart.com/someuser/favourites/61706897/model-stocks"
+    )
+    assert ref.folder_id == "61706897"
+    assert ref.folder_slug == "model-stocks"
+
+
+def test_folder_slug_is_none_when_url_has_no_trailing_name(provider):
+    ref = provider.parse("https://www.deviantart.com/someuser/favourites/61706897")
+    assert ref.folder_id == "61706897"
+    assert ref.folder_slug is None
+
+
 def test_parses_tag_url(provider):
     ref = provider.parse("https://www.deviantart.com/tag/hamster")
     assert ref.provider == "deviantart"
@@ -66,6 +80,36 @@ def test_parses_tag_url(provider):
     assert ref.username == ""
     assert ref.folder_id is None
     assert ref.raw_url == "https://www.deviantart.com/tag/hamster"
+
+
+def test_parses_search_url(provider):
+    ref = provider.parse("https://www.deviantart.com/search?q=posing")
+    assert ref.provider == "deviantart"
+    assert ref.kind == "search"
+    assert ref.query == "posing"
+    assert ref.username == ""
+    assert ref.folder_id is None
+    assert ref.raw_url == "https://www.deviantart.com/search?q=posing"
+
+
+def test_parses_search_url_decodes_multiword_query(provider):
+    ref = provider.parse(
+        "https://www.deviantart.com/search?q=female%20pose+reference&order=popular"
+    )
+    assert ref.query == "female pose reference"
+
+
+def test_parses_search_deviations_subpath(provider):
+    ref = provider.parse("https://www.deviantart.com/search/deviations?q=dragon")
+    assert ref.kind == "search"
+    assert ref.query == "dragon"
+
+
+def test_parse_rejects_search_url_without_a_query(provider):
+    with pytest.raises(ValueError):
+        provider.parse("https://www.deviantart.com/search")
+    with pytest.raises(ValueError):
+        provider.parse("https://www.deviantart.com/search?q=")
 
 
 def test_parses_tag_url_normalizes_case_and_leading_hash(provider):

@@ -10,69 +10,183 @@
     <main id="app">
       <!-- Start view -->
       <section id="view-start" class="view">
-        <h1>Timed Sketching Helper</h1>
-        <p id="da-auth" class="status auth" hidden>
-          <span id="da-auth-text"></span>
-          <button type="button" id="da-auth-btn"></button>
-        </p>
-        <form id="start-form">
-          <label>
-            Gallery or favourites URL
-            <input
-              id="url"
-              name="url"
-              type="url"
-              list="recent-urls"
-              placeholder="https://www.deviantart.com/user/gallery/all"
-              required
-            />
-            <datalist id="recent-urls"></datalist>
-          </label>
-          <div class="row">
-            <label>
-              Images
-              <input id="count" name="count" type="number" min="1" max="500" value="20" required />
-            </label>
-            <label>
-              Seconds per image
-              <input id="duration" name="duration" type="number" min="1" max="3600" value="90" required />
-            </label>
+        <div class="start-layout">
+          <div class="card">
+            <header class="brand">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 2h12M6 22h12M8 2v4l8 12v4M16 2v4L8 18v4" />
+              </svg>
+              <span>Timed Sketching Helper</span>
+            </header>
+
+            <p class="eyebrow">New session</p>
+            <h1>Choose a reference set</h1>
+            <p class="lede">
+              Paste a DeviantArt gallery, favourites, tag, or search URL. A random
+              selection is pulled and each drawing is timed.
+            </p>
+
+            <p id="da-auth" class="auth" hidden>
+              <span id="da-auth-text"></span>
+              <button type="button" id="da-auth-btn"></button>
+            </p>
+
+            <form id="start-form">
+              <label class="field">
+                <span class="field-label">Reference URL</span>
+                <input
+                  id="url"
+                  name="url"
+                  type="url"
+                  list="recent-urls"
+                  placeholder="https://www.deviantart.com/user/gallery/all"
+                  required
+                />
+                <datalist id="recent-urls"></datalist>
+              </label>
+              <div class="row">
+                <label class="field">
+                  <span class="field-label">Images</span>
+                  <input id="count" name="count" type="number" min="1" max="500" value="20" required />
+                </label>
+                <label class="field">
+                  <span class="field-label">Seconds per image</span>
+                  <input id="duration" name="duration" type="number" min="1" max="3600" value="90" required />
+                </label>
+              </div>
+              <label class="check">
+                <input id="force-refresh" name="force-refresh" type="checkbox" />
+                <span>Re-download images — ignore the local cache</span>
+              </label>
+              <button type="submit" id="start-btn">Start practice</button>
+            </form>
+
+            <div id="fetch-progress" hidden>
+              <div class="fetch-bar"><span></span></div>
+              <p id="fetch-progress-text"></p>
+            </div>
+
+            <p id="start-status" class="status" hidden></p>
+
+            <p class="hint">
+              During a session: <kbd>Space</kbd> pause · <kbd>&larr;</kbd> <kbd>&rarr;</kbd> move · <kbd>R</kbd> reroll
+            </p>
           </div>
-          <label class="check">
-            <input id="force-refresh" name="force-refresh" type="checkbox" />
-            Re-download images (ignore cache)
-          </label>
-          <button type="submit" id="start-btn">Start practice</button>
-        </form>
-        <p id="start-status" class="status" hidden></p>
+
+          <aside id="saved" hidden>
+            <section class="saved-group" id="saved-favorites" hidden>
+              <h2 class="saved-title">Favorites</h2>
+              <ul class="saved-list"></ul>
+            </section>
+            <section class="saved-group" id="saved-recent" hidden>
+              <h2 class="saved-title">Last added</h2>
+              <ul class="saved-list"></ul>
+            </section>
+          </aside>
+        </div>
       </section>
 
       <!-- Session view -->
-      <section id="view-session" class="view" hidden>
+      <section id="view-session" class="view" data-dock="top" hidden>
         <div id="stage">
-          <img id="stage-img" alt="Reference image" />
+          <div id="time-bar"></div>
+          <img id="stage-img" alt="Reference image" draggable="false" />
+          <div id="stage-spinner" aria-hidden="true"></div>
+          <div id="zoom" hidden>
+            <button id="zoom-in" type="button" title="Zoom in (+)" aria-label="Zoom in">+</button>
+            <button id="zoom-out" type="button" title="Zoom out (−)" aria-label="Zoom out">−</button>
+          </div>
+          <div id="hud">
+            <span id="progress">1 / 1</span>
+            <span id="timer">1:30</span>
+            <a id="page-link" href="#" target="_blank" rel="noreferrer">source ↗</a>
+          </div>
+          <div id="paused-veil" hidden>
+            Paused
+            <small>press space to resume</small>
+          </div>
         </div>
-        <div id="hud">
-          <span id="progress">1 / 1</span>
-          <span id="timer">90</span>
-          <a id="page-link" href="#" target="_blank" rel="noreferrer">source ↗</a>
-        </div>
+
         <div id="controls">
-          <button data-action="prev" title="Previous (←)">◀ Prev</button>
-          <button data-action="pause" title="Pause / resume (space)">Pause</button>
-          <button data-action="reroll" title="Swap for another random image (r)">⟳ Reroll</button>
-          <button data-action="skip" title="Skip (→)">Skip ▶</button>
-          <button data-action="end" title="End session">End</button>
+          <div class="ctrl-group">
+            <button data-action="prev" title="Previous (←)">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M7 5v14" /><path d="M18 6 9 12l9 6z" />
+              </svg>
+              <span class="lbl">Prev</span>
+            </button>
+            <button data-action="pause" title="Pause / resume (space)">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 5v14M15 5v14" />
+              </svg>
+              <span class="lbl">Pause</span>
+            </button>
+            <button data-action="reroll" title="Swap for another random image (r)">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 11a8 8 0 0 1 13.4-5.9L20 8" /><path d="M20 3v5h-5" />
+                <path d="M21 13a8 8 0 0 1-13.4 5.9L4 16" /><path d="M4 21v-5h5" />
+              </svg>
+              <span class="lbl">Reroll</span>
+            </button>
+            <button data-action="skip" title="Skip (→)">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M17 5v14" /><path d="M6 6l9 6-9 6z" />
+              </svg>
+              <span class="lbl">Skip</span>
+            </button>
+          </div>
+
+          <div class="ctrl-spacer"></div>
+
+          <button data-action="end" class="end" title="End session">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+              stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+            <span class="lbl">End session</span>
+          </button>
+
+          <div class="dock" role="group" aria-label="Toolbar position">
+            <button data-dock="top" title="Toolbar on top" aria-pressed="true">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                <rect x="3" y="3" width="14" height="14" rx="2.5" /><rect x="3" y="3" width="14" height="4.5" rx="1.5" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+            <button data-dock="left" title="Toolbar on left" aria-pressed="false">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                <rect x="3" y="3" width="14" height="14" rx="2.5" /><rect x="3" y="3" width="4.5" height="14" rx="1.5" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+            <button data-dock="right" title="Toolbar on right" aria-pressed="false">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                <rect x="3" y="3" width="14" height="14" rx="2.5" /><rect x="12.5" y="3" width="4.5" height="14" rx="1.5" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+            <button data-dock="bottom" title="Toolbar on bottom" aria-pressed="false">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                <rect x="3" y="3" width="14" height="14" rx="2.5" /><rect x="3" y="12.5" width="14" height="4.5" rx="1.5" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+          </div>
         </div>
       </section>
 
       <!-- Done view -->
       <section id="view-done" class="view" hidden>
-        <h2>Session complete</h2>
-        <p id="done-summary"></p>
-        <div class="row">
-          <button id="again-btn">Same list again</button>
-          <button id="new-btn">New list</button>
+        <div class="card">
+          <p class="eyebrow">Session complete</p>
+          <h1>Nice work.</h1>
+          <p id="done-summary" class="lede"></p>
+          <div class="row">
+            <button id="again-btn">Same list again</button>
+            <button id="new-btn">New list</button>
+          </div>
+          <button type="button" id="fav-btn" class="fav-toggle" aria-pressed="false" hidden></button>
         </div>
       </section>
     </main>
