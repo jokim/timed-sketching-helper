@@ -84,6 +84,10 @@ Key design points, each spanning several files:
 - There is no `/collections/all`. For `.../favourites/all`, the provider lists every
   collection folder via `/collections/folders` and aggregates them.
 - `mature_content` must be sent on every browse request; `_get()` always adds it.
+- `deviantart.com/tag/<tag>` maps to the site-wide `/browse/tags?tag=` feed, not a
+  user. Its `SourceRef` has `kind="tag"`, `username=""`, and `tag` set; `list_images`
+  branches on that before the gallery/collections path. (`deviantart.com/tag/foo`
+  used to be misparsed as the user "tag", yielding "Account is inactive".)
 - The authorize endpoint now rejects requests without a PKCE `code_challenge`
   (`make_pkce_pair()` builds the S256 pair).
 - Client-credentials tokens are treated as anonymous, so `content.src` for

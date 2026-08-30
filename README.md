@@ -46,6 +46,7 @@ Paste a URL such as:
 - `https://www.deviantart.com/<user>/gallery/<folderid>/<name>`
 - `https://www.deviantart.com/<user>/favourites/all`
 - `https://www.deviantart.com/<user>/favourites/<folderid>/<name>`
+- `https://www.deviantart.com/tag/<tag>`
 
 Set the image count and seconds-per-image, then **Start practice**.
 

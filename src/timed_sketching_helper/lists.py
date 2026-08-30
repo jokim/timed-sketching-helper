@@ -35,6 +35,8 @@ def _dedupe(images: list[ImageMeta]) -> list[ImageMeta]:
 
 
 def _title_for(ref) -> str:
+    if ref.kind == "tag":
+        return f"#{ref.tag}"
     label = "favourites" if ref.kind == "favourites" else "gallery"
     if ref.folder_id:
         return f"{ref.username} · {label} · {ref.folder_id}"

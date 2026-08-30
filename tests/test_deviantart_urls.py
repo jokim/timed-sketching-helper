@@ -58,6 +58,26 @@ def test_parses_supported_url_shapes(provider, url, kind, username, folder_id):
     assert ref.raw_url == url
 
 
+def test_parses_tag_url(provider):
+    ref = provider.parse("https://www.deviantart.com/tag/hamster")
+    assert ref.provider == "deviantart"
+    assert ref.kind == "tag"
+    assert ref.tag == "hamster"
+    assert ref.username == ""
+    assert ref.folder_id is None
+    assert ref.raw_url == "https://www.deviantart.com/tag/hamster"
+
+
+def test_parses_tag_url_normalizes_case_and_leading_hash(provider):
+    assert provider.parse("https://deviantart.com/tag/HamsterArt").tag == "hamsterart"
+    assert provider.parse("https://www.deviantart.com/tag/%23hamster").tag == "hamster"
+
+
+def test_parse_rejects_tag_url_without_a_tag(provider):
+    with pytest.raises(ValueError):
+        provider.parse("https://www.deviantart.com/tag/")
+
+
 def test_matches_only_deviantart_hosts(provider):
     assert provider.matches("https://www.deviantart.com/someuser/gallery/all")
     assert provider.matches("https://someuser.deviantart.com/gallery")

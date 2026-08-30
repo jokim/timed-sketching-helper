@@ -10,10 +10,11 @@ class SourceRef:
     """A normalized reference to a list of images on some external site."""
 
     provider: str
-    kind: str  # "gallery" | "favourites"
-    username: str
+    kind: str  # "gallery" | "favourites" | "tag"
+    username: str  # "" for kinds that are not user-scoped (e.g. "tag")
     folder_id: str | None  # None means the provider's "all" folder
     raw_url: str
+    tag: str | None = None  # set only when kind == "tag"
 
 
 @dataclass(frozen=True)

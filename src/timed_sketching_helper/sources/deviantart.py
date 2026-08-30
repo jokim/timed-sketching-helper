@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
@@ -81,6 +81,23 @@ class DeviantArtProvider:
 
         segments = [s for s in parsed.path.split("/") if s]
 
+        # deviantart.com/tag/<name> — a site-wide tag feed, not user-scoped.
+        if segments and segments[0].lower() == "tag" and host in {
+            "deviantart.com",
+            "www.deviantart.com",
+        }:
+            tag = unquote(segments[1]).lstrip("#").lower() if len(segments) >= 2 else ""
+            if not tag:
+                raise ValueError(f"DeviantArt tag URL has no tag: {url!r}")
+            return SourceRef(
+                provider=self.name,
+                kind="tag",
+                username="",
+                folder_id=None,
+                raw_url=url,
+                tag=tag,
+            )
+
         if host.endswith(".deviantart.com") and host not in {
             "deviantart.com",
             "www.deviantart.com",
@@ -109,25 +126,45 @@ class DeviantArtProvider:
     # -- API access ---------------------------------------------------------
 
     async def list_images(self, ref: SourceRef) -> list[ImageMeta]:
-        endpoint = "gallery" if ref.kind == "gallery" else "collections"
         async with httpx.AsyncClient(
             timeout=30.0, headers={"User-Agent": USER_AGENT}
         ) as client:
-            folder_ids = await self._target_folder_ids(client, ref, endpoint)
+            if ref.kind == "tag":
+                return await self._collect(
+                    self._iter_pages(client, "/browse/tags", {"tag": ref.tag})
+                )
 
-            images: list[ImageMeta] = []
-            seen: set[str] = set()
-            for folder_id in folder_ids:
-                async for deviation in self._iter_folder(
-                    client, endpoint, folder_id, ref.username
-                ):
-                    meta = _deviation_to_meta(deviation)
-                    if meta is not None and meta.source_id not in seen:
-                        seen.add(meta.source_id)
-                        images.append(meta)
-                    if len(images) >= MAX_ITEMS:
-                        return images
-            return images
+            endpoint = "gallery" if ref.kind == "gallery" else "collections"
+            folder_ids = await self._target_folder_ids(client, ref, endpoint)
+            return await self._collect(
+                self._iter_folders(client, endpoint, folder_ids, ref.username)
+            )
+
+    async def _iter_folders(
+        self,
+        client: httpx.AsyncClient,
+        endpoint: str,
+        folder_ids: list[str],
+        username: str,
+    ):
+        for folder_id in folder_ids:
+            async for deviation in self._iter_pages(
+                client, f"/{endpoint}/{folder_id}", {"username": username}
+            ):
+                yield deviation
+
+    @staticmethod
+    async def _collect(deviations) -> list[ImageMeta]:
+        images: list[ImageMeta] = []
+        seen: set[str] = set()
+        async for deviation in deviations:
+            meta = _deviation_to_meta(deviation)
+            if meta is not None and meta.source_id not in seen:
+                seen.add(meta.source_id)
+                images.append(meta)
+            if len(images) >= MAX_ITEMS:
+                return images
+        return images
 
     async def _target_folder_ids(
         self, client: httpx.AsyncClient, ref: SourceRef, endpoint: str
@@ -142,23 +179,19 @@ class DeviantArtProvider:
         # There is no /collections/all, so aggregate every collection folder.
         return await self._all_folder_ids(client, endpoint, ref.username)
 
-    async def _iter_folder(
+    async def _iter_pages(
         self,
         client: httpx.AsyncClient,
-        endpoint: str,
-        folder_id: str,
-        username: str,
+        path: str,
+        params: dict,
     ):
+        """Yield every deviation across an offset-paginated browse endpoint."""
         offset = 0
         while True:
             payload = await self._get(
                 client,
-                f"/{endpoint}/{folder_id}",
-                params={
-                    "username": username,
-                    "offset": offset,
-                    "limit": PAGE_LIMIT,
-                },
+                path,
+                params={**params, "offset": offset, "limit": PAGE_LIMIT},
             )
             for deviation in payload.get("results", []):
                 yield deviation

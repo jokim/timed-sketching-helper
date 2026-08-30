@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from timed_sketching_helper import db as db_module
-from timed_sketching_helper.lists import get_list
+from timed_sketching_helper.lists import _title_for, get_list
 from timed_sketching_helper.models import ImageMeta, SourceRef
 
 ACCOUNT = 1
@@ -37,6 +37,14 @@ def meta(source_id):
 
 def resolver_for(provider):
     return lambda url: provider
+
+
+def test_title_for_tag():
+    ref = SourceRef(
+        "deviantart", "tag", "", None,
+        "https://www.deviantart.com/tag/hamster", tag="hamster",
+    )
+    assert _title_for(ref) == "#hamster"
 
 
 async def test_first_fetch_persists_and_returns_items(conn):

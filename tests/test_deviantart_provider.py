@@ -46,6 +46,17 @@ def _deviation(devid, *, with_content=True):
     return d
 
 
+def tag_ref(tag="hamster"):
+    return SourceRef(
+        provider="deviantart",
+        kind="tag",
+        username="",
+        folder_id=None,
+        raw_url=f"https://www.deviantart.com/tag/{tag}",
+        tag=tag,
+    )
+
+
 def gallery_ref(folder_id=None):
     return SourceRef(
         provider="deviantart",
@@ -85,6 +96,36 @@ async def test_list_images_follows_pagination():
     assert images[0].image_url == "https://images.example/a.jpg"
     assert images[0].author == "artist"
     assert route.call_count == 2
+
+
+@respx.mock
+async def test_list_images_fetches_tag_browse_with_pagination():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/browse/tags")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "results": [_deviation("a"), _deviation("b")],
+                "has_more": True,
+                "next_offset": 2,
+            },
+        ),
+        httpx.Response(
+            200,
+            json={
+                "results": [_deviation("c")],
+                "has_more": False,
+                "next_offset": None,
+            },
+        ),
+    ]
+
+    images = await DeviantArtProvider("id", "secret").list_images(tag_ref())
+
+    assert [i.source_id for i in images] == ["a", "b", "c"]
+    assert route.call_count == 2
+    assert route.calls[0].request.url.params["tag"] == "hamster"
 
 
 @respx.mock
