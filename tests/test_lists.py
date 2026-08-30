@@ -71,6 +71,18 @@ async def test_force_refresh_refetches(conn):
     assert [i.source_id for i in result.items] == ["a", "c"]
 
 
+async def test_force_refresh_clears_cached_images_so_they_redownload(conn):
+    provider = FakeProvider([meta("a")])
+    await get_list(conn, ACCOUNT, URL, resolver=resolver_for(provider))
+    db_module.record_cache_entry(conn, "a", "image/jpeg")
+
+    await get_list(
+        conn, ACCOUNT, URL, resolver=resolver_for(provider), force_refresh=True
+    )
+
+    assert db_module.get_cache_entry(conn, "a") is None
+
+
 async def test_stale_list_is_refetched(conn):
     provider = FakeProvider([meta("a")])
     await get_list(conn, ACCOUNT, URL, resolver=resolver_for(provider))

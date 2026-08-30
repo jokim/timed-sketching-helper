@@ -58,6 +58,16 @@ CREATE TABLE IF NOT EXISTS preferences (
     value      TEXT NOT NULL,
     PRIMARY KEY (account_id, key)
 );
+
+CREATE TABLE IF NOT EXISTS deviantart_oauth (
+    account_id    INTEGER PRIMARY KEY REFERENCES accounts(id),
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    scope         TEXT NOT NULL DEFAULT '',
+    username      TEXT,
+    updated_at    TEXT NOT NULL
+);
 """
 
 DEFAULT_PREFERENCES = {"default_count": "20", "default_duration": "90"}
@@ -227,6 +237,53 @@ def record_cache_entry(
 
 def clear_cache_entry(conn: sqlite3.Connection, source_id: str) -> None:
     conn.execute("DELETE FROM image_cache WHERE source_id = ?", (source_id,))
+    conn.commit()
+
+
+def clear_cache_entries(
+    conn: sqlite3.Connection, source_ids: list[str]
+) -> None:
+    conn.executemany(
+        "DELETE FROM image_cache WHERE source_id = ?",
+        [(source_id,) for source_id in source_ids],
+    )
+    conn.commit()
+
+
+# -- DeviantArt OAuth tokens -------------------------------------------------
+
+
+def get_oauth(
+    conn: sqlite3.Connection, account_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM deviantart_oauth WHERE account_id = ?", (account_id,)
+    ).fetchone()
+
+
+def save_oauth(
+    conn: sqlite3.Connection,
+    account_id: int,
+    *,
+    access_token: str,
+    refresh_token: str,
+    expires_at: str,
+    scope: str,
+    username: str | None,
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO deviantart_oauth"
+        " (account_id, access_token, refresh_token, expires_at, scope, username, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (account_id, access_token, refresh_token, expires_at, scope, username, _now()),
+    )
+    conn.commit()
+
+
+def delete_oauth(conn: sqlite3.Connection, account_id: int) -> None:
+    conn.execute(
+        "DELETE FROM deviantart_oauth WHERE account_id = ?", (account_id,)
+    )
     conn.commit()
 
 

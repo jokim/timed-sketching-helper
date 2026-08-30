@@ -4,12 +4,15 @@ import respx
 from fastapi.testclient import TestClient
 
 from timed_sketching_helper import db as db_module
+from timed_sketching_helper.config import Config
 from timed_sketching_helper.imagecache import ImageCache
 from timed_sketching_helper.main import create_app
 from timed_sketching_helper.models import ImageMeta, SourceRef
 from timed_sketching_helper.sources.base import UnknownSourceError
 
 GALLERY_URL = "https://www.deviantart.com/artist/gallery/all"
+REDIRECT_URI = "http://127.0.0.1:8765/auth/deviantart/callback"
+TOKEN_URL = "https://www.deviantart.com/oauth2/token"
 
 
 class FakeProvider:
@@ -53,6 +56,112 @@ def client(conn, tmp_path):
         resolver=resolver,
     )
     return TestClient(app)
+
+
+@pytest.fixture
+def auth_client(conn, tmp_path):
+    cfg = Config(
+        deviantart_client_id="cid",
+        deviantart_client_secret="csecret",
+        deviantart_redirect_uri=REDIRECT_URI,
+        mature_content=True,
+        data_dir=tmp_path,
+        list_ttl_hours=24,
+    )
+    app = create_app(
+        conn=conn, cache=ImageCache(conn, tmp_path / "cache"), cfg=cfg
+    )
+    return TestClient(app)
+
+
+def test_auth_status_starts_disconnected(auth_client):
+    assert auth_client.get("/auth/deviantart/status").json() == {
+        "connected": False,
+        "username": None,
+    }
+
+
+def test_login_redirects_to_authorize_with_matching_state_cookie(auth_client):
+    res = auth_client.get("/auth/deviantart/login", follow_redirects=False)
+
+    assert res.status_code == 302
+    location = res.headers["location"]
+    assert location.startswith("https://www.deviantart.com/oauth2/authorize?")
+    state = auth_client.cookies.get("da_oauth_state")
+    assert state and f"state={state}" in location
+    assert auth_client.cookies.get("da_oauth_verifier")
+    assert "code_challenge=" in location
+    assert "code_challenge_method=S256" in location
+
+
+def test_callback_rejects_state_mismatch(auth_client):
+    auth_client.cookies.set("da_oauth_state", "expected")
+
+    res = auth_client.get(
+        "/auth/deviantart/callback?code=x&state=wrong", follow_redirects=False
+    )
+
+    assert res.status_code == 400
+    assert auth_client.get("/auth/deviantart/status").json()["connected"] is False
+
+
+def test_callback_rejects_missing_pkce_verifier(auth_client):
+    auth_client.cookies.set("da_oauth_state", "s123")
+
+    res = auth_client.get(
+        "/auth/deviantart/callback?code=x&state=s123", follow_redirects=False
+    )
+
+    assert res.status_code == 400
+
+
+@respx.mock
+def test_callback_exchanges_code_and_connects(auth_client):
+    respx.mock.post(TOKEN_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "access_token": "acc",
+                "refresh_token": "ref",
+                "expires_in": 3600,
+                "scope": "user browse",
+            },
+        )
+    )
+    respx.mock.get(url__startswith="https://www.deviantart.com/api/v1/oauth2/user/whoami").mock(
+        return_value=httpx.Response(200, json={"username": "ninjatron"})
+    )
+    auth_client.cookies.set("da_oauth_state", "s123")
+    auth_client.cookies.set("da_oauth_verifier", "v123")
+
+    res = auth_client.get(
+        "/auth/deviantart/callback?code=the-code&state=s123",
+        follow_redirects=False,
+    )
+
+    assert res.status_code == 302
+    assert res.headers["location"] == "/?da_auth=connected"
+    assert auth_client.get("/auth/deviantart/status").json() == {
+        "connected": True,
+        "username": "ninjatron",
+    }
+
+
+def test_logout_disconnects(auth_client, conn):
+    db_module.save_oauth(
+        conn,
+        1,
+        access_token="a",
+        refresh_token="r",
+        expires_at="2999-01-01T00:00:00+00:00",
+        scope="",
+        username="ninjatron",
+    )
+
+    res = auth_client.post("/auth/deviantart/logout")
+
+    assert res.status_code == 204
+    assert auth_client.get("/auth/deviantart/status").json()["connected"] is False
 
 
 @respx.mock

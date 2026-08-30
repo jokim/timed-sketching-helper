@@ -61,6 +61,23 @@ button:hover { border-color: var(--accent); }
 .status { color: var(--muted); }
 .status.error { color: #ff8080; }
 
+.auth {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+.auth button { padding: 4px 10px; font-size: 0.85rem; }
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+label.check input { width: auto; margin-top: 0; }
+
 /* Session */
 #view-session { display: flex; flex-direction: column; gap: 12px; }
 #stage {

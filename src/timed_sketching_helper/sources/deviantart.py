@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable, Callable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -44,12 +45,25 @@ def _error_detail(response: httpx.Response) -> str:
     return ": ".join(parts) if parts else f"HTTP {response.status_code}"
 
 
+UserTokenProvider = Callable[..., Awaitable[str | None]]
+
+
 class DeviantArtProvider:
     name = "deviantart"
 
-    def __init__(self, client_id: str = "", client_secret: str = "") -> None:
+    def __init__(
+        self,
+        client_id: str = "",
+        client_secret: str = "",
+        *,
+        user_token: UserTokenProvider | None = None,
+    ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
+        # When set, an awaitable returning a logged-in user's access token (or
+        # None if nobody is logged in). Preferred over the client-credentials
+        # grant because anonymous tokens get blurred mature content.
+        self._user_token = user_token
         self._token: str | None = None
         self._token_expires_at: float = 0.0
 
@@ -206,7 +220,7 @@ class DeviantArtProvider:
         )
         if response.status_code == 401:
             self._token = None
-            token = await self._get_token(client)
+            token = await self._get_token(client, force=True)
             response = await client.get(
                 f"{API_BASE}{path}",
                 params=request_params,
@@ -218,8 +232,14 @@ class DeviantArtProvider:
             )
         return response.json()
 
-    async def _get_token(self, client: httpx.AsyncClient) -> str:
-        if self._token and time.monotonic() < self._token_expires_at:
+    async def _get_token(
+        self, client: httpx.AsyncClient, *, force: bool = False
+    ) -> str:
+        if self._user_token is not None:
+            user_token = await self._user_token(force=force)
+            if user_token:
+                return user_token
+        if self._token and not force and time.monotonic() < self._token_expires_at:
             return self._token
         if not (self._client_id and self._client_secret):
             raise DeviantArtAuthError(

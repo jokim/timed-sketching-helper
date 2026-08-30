@@ -43,6 +43,49 @@ async function loadRecent() {
   }
 }
 
+async function loadAuthStatus() {
+  const wrap = $("#da-auth");
+  const text = $("#da-auth-text");
+  const btn = $("#da-auth-btn");
+  try {
+    const status = await api("/auth/deviantart/status");
+    if (status.connected) {
+      text.textContent = status.username
+        ? `DeviantArt: connected as ${status.username}.`
+        : "DeviantArt: connected.";
+      btn.textContent = "Disconnect";
+      btn.onclick = async () => {
+        await fetch("/auth/deviantart/logout", { method: "POST" });
+        loadAuthStatus();
+      };
+    } else {
+      text.textContent =
+        "Mature / sensitive images stay blurred until you connect DeviantArt.";
+      btn.textContent = "Connect DeviantArt";
+      btn.onclick = () => {
+        window.location.href = "/auth/deviantart/login";
+      };
+    }
+    wrap.hidden = false;
+  } catch {
+    wrap.hidden = true;
+  }
+}
+
+function showAuthReturnMessage() {
+  const params = new URLSearchParams(window.location.search);
+  const result = params.get("da_auth");
+  if (!result) return;
+  if (result === "failed") {
+    setStartStatus("DeviantArt sign-in failed. Try connecting again.", true);
+  } else if (result === "connected") {
+    setStartStatus(
+      "Connected. Tick “Re-download images” to un-blur an already-fetched list.",
+    );
+  }
+  window.history.replaceState({}, "", window.location.pathname);
+}
+
 async function loadPrefs() {
   try {
     const prefs = await api("/api/prefs");
@@ -63,6 +106,7 @@ function setStartStatus(message, isError = false) {
 $("#start-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const url = $("#url").value.trim();
+  const forceRefresh = $("#force-refresh").checked;
   state.count = Number($("#count").value);
   state.duration = Number($("#duration").value);
   const btn = $("#start-btn");
@@ -72,7 +116,7 @@ $("#start-form").addEventListener("submit", async (event) => {
     const list = await api("/api/lists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, force_refresh: forceRefresh }),
     });
     state.listId = list.list_id;
     setStartStatus(`Fetched ${list.count} images. Preparing session…`);
@@ -217,6 +261,7 @@ document.addEventListener("keydown", (event) => {
 $("#again-btn").addEventListener("click", startSession);
 $("#new-btn").addEventListener("click", () => {
   loadRecent();
+  loadAuthStatus();
   show("start");
 });
 
@@ -224,4 +269,6 @@ $("#new-btn").addEventListener("click", () => {
 
 loadRecent();
 loadPrefs();
+loadAuthStatus();
+showAuthReturnMessage();
 show("start");

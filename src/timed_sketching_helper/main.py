@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import secrets
 import sqlite3
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -22,6 +24,13 @@ from timed_sketching_helper.sources.deviantart import (
     DeviantArtAuthError,
     DeviantArtProvider,
 )
+from timed_sketching_helper.sources.deviantart_oauth import (
+    DeviantArtOAuth,
+    make_pkce_pair,
+)
+
+OAUTH_STATE_COOKIE = "da_oauth_state"
+OAUTH_VERIFIER_COOKIE = "da_oauth_verifier"
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -42,9 +51,11 @@ class PrefsRequest(BaseModel):
     default_duration: int = Field(ge=1, le=3600)
 
 
-def _default_resolver(cfg: Config):
+def _default_resolver(cfg: Config, user_token=None):
     provider = DeviantArtProvider(
-        cfg.deviantart_client_id, cfg.deviantart_client_secret
+        cfg.deviantart_client_id,
+        cfg.deviantart_client_secret,
+        user_token=user_token,
     )
 
     def resolver(url: str) -> SourceProvider:
@@ -75,7 +86,18 @@ def create_app(
     conn = conn or db.connect(cfg.db_path)
     db.init_db(conn)
     cache = cache or ImageCache(conn, cfg.cache_dir)
-    resolver = resolver or _default_resolver(cfg)
+
+    oauth = DeviantArtOAuth(
+        conn,
+        cfg.deviantart_client_id,
+        cfg.deviantart_client_secret,
+        cfg.deviantart_redirect_uri,
+    )
+
+    async def _user_token(*, force: bool = False) -> str | None:
+        return await oauth.access_token(db.current_account(), force=force)
+
+    resolver = resolver or _default_resolver(cfg, _user_token)
 
     app = FastAPI(title="Timed Sketching Helper")
 
@@ -158,6 +180,52 @@ def create_app(
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
+    @app.get("/auth/deviantart/status")
+    async def deviantart_status() -> dict:
+        return oauth.status(db.current_account())
+
+    @app.get("/auth/deviantart/login")
+    async def deviantart_login() -> RedirectResponse:
+        state = secrets.token_urlsafe(24)
+        verifier, challenge = make_pkce_pair()
+        response = RedirectResponse(
+            oauth.authorize_url(state, challenge), status_code=302
+        )
+        for name, value in (
+            (OAUTH_STATE_COOKIE, state),
+            (OAUTH_VERIFIER_COOKIE, verifier),
+        ):
+            response.set_cookie(
+                name, value, max_age=600, httponly=True, samesite="lax"
+            )
+        return response
+
+    @app.get("/auth/deviantart/callback")
+    async def deviantart_callback(
+        request: Request, code: str = "", state: str = ""
+    ) -> RedirectResponse:
+        expected = request.cookies.get(OAUTH_STATE_COOKIE)
+        verifier = request.cookies.get(OAUTH_VERIFIER_COOKIE)
+        if not expected or not secrets.compare_digest(expected, state):
+            raise HTTPException(400, "OAuth state mismatch. Try connecting again.")
+        if not verifier:
+            raise HTTPException(400, "OAuth session expired. Try connecting again.")
+        try:
+            await oauth.exchange(db.current_account(), code, verifier)
+        except DeviantArtAuthError:
+            target = "/?da_auth=failed"
+        else:
+            target = "/?da_auth=connected"
+        response = RedirectResponse(target, status_code=302)
+        response.delete_cookie(OAUTH_STATE_COOKIE)
+        response.delete_cookie(OAUTH_VERIFIER_COOKIE)
+        return response
+
+    @app.post("/auth/deviantart/logout")
+    async def deviantart_logout() -> Response:
+        oauth.logout(db.current_account())
+        return Response(status_code=204)
+
     @app.get("/api/recent")
     async def recent() -> list[dict]:
         rows = db.recent_lists(conn, db.current_account())
@@ -205,7 +273,19 @@ def _json_error(status: int, detail: str):
     return JSONResponse(status_code=status, content={"error": detail})
 
 
-def main() -> None:
+def main(
+    host: str = "127.0.0.1", port: int = 8765, log_level: str = "info"
+) -> None:
+    log_level = log_level.lower()
+    logging.basicConfig(
+        level=logging.getLevelNamesMapping().get(log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
+    if log_level == "debug":
+        # httpx logs every DeviantArt request/response at DEBUG.
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+        logging.getLogger("httpcore").setLevel(logging.INFO)
+
     cfg = get_config()
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     if not cfg.has_deviantart_credentials:
@@ -213,7 +293,7 @@ def main() -> None:
             "Warning: DeviantArt credentials are not set. Copy .env.example to "
             ".env and fill them in.\n"
         )
-    uvicorn.run(create_app(cfg=cfg), host="127.0.0.1", port=8765)
+    uvicorn.run(create_app(cfg=cfg), host=host, port=port, log_level=log_level)
 
 
 if __name__ == "__main__":

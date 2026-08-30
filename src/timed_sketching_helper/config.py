@@ -20,6 +20,7 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
 class Config:
     deviantart_client_id: str
     deviantart_client_secret: str
+    deviantart_redirect_uri: str
     mature_content: bool
     data_dir: Path
     list_ttl_hours: int
@@ -43,6 +44,10 @@ def load_config() -> Config:
     return Config(
         deviantart_client_id=os.environ.get("DEVIANTART_CLIENT_ID", ""),
         deviantart_client_secret=os.environ.get("DEVIANTART_CLIENT_SECRET", ""),
+        deviantart_redirect_uri=os.environ.get(
+            "DEVIANTART_REDIRECT_URI",
+            "http://127.0.0.1:8765/auth/deviantart/callback",
+        ),
         mature_content=_as_bool(os.environ.get("DA_MATURE_CONTENT"), default=True),
         data_dir=data_dir,
         list_ttl_hours=int(os.environ.get("LIST_TTL_HOURS", "24")),

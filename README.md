@@ -13,14 +13,24 @@ uv sync
 cp .env.example .env
 ```
 
-Register a DeviantArt application at <https://www.deviantart.com/developers/>
-(any redirect URI works — client-credentials auth is used) and put its client
-id and secret into `.env`:
+Register a DeviantArt application at <https://www.deviantart.com/developers/>,
+put its client id and secret into `.env`, and add
+`http://127.0.0.1:8765/auth/deviantart/callback` to the app's **OAuth2 Redirect
+URI Whitelist**:
 
 ```
 DEVIANTART_CLIENT_ID=your-id
 DEVIANTART_CLIENT_SECRET=your-secret
 ```
+
+### Sensitive / mature content
+
+By default the app talks to DeviantArt anonymously (client-credentials), and
+DeviantArt serves *blurred* images for anything marked mature or sensitive. To
+see them un-blurred, click **Connect DeviantArt** on the start screen and log in
+with an account that has mature content enabled in its settings. For lists you
+already fetched while logged out, tick **Re-download images** when starting the
+next session so the blurred copies are replaced.
 
 ## Run
 

@@ -245,6 +245,72 @@ async def test_favourites_all_aggregates_every_collection_folder():
 
 
 @respx.mock
+async def test_get_prefers_user_token_over_client_credentials():
+    async def user_token(*, force=False):
+        return "user-tok"
+
+    token = respx.mock.post(TOKEN_URL).mock(
+        return_value=httpx.Response(200, json={"access_token": "cc", "expires_in": 3600})
+    )
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(
+            200, json={"results": [_deviation("a")], "has_more": False}
+        )
+    )
+
+    images = await DeviantArtProvider(
+        "id", "secret", user_token=user_token
+    ).list_images(gallery_ref())
+
+    assert [i.source_id for i in images] == ["a"]
+    assert not token.called
+    assert respx.mock.calls[-1].request.headers["Authorization"] == "Bearer user-tok"
+
+
+@respx.mock
+async def test_get_falls_back_to_client_credentials_when_no_user_logged_in():
+    async def user_token(*, force=False):
+        return None
+
+    _token_route(respx.mock)
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(200, json={"results": [], "has_more": False})
+    )
+
+    await DeviantArtProvider("id", "secret", user_token=user_token).list_images(
+        gallery_ref()
+    )
+
+    assert respx.mock.calls[-1].request.headers["Authorization"] == "Bearer tok-123"
+
+
+@respx.mock
+async def test_user_token_is_force_refreshed_on_401():
+    seen_force: list[bool] = []
+    tokens = iter(["stale-user", "fresh-user"])
+
+    async def user_token(*, force=False):
+        seen_force.append(force)
+        return next(tokens)
+
+    gallery = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    gallery.side_effect = [
+        httpx.Response(401, json={"error": "invalid_token"}),
+        httpx.Response(
+            200, json={"results": [_deviation("a")], "has_more": False}
+        ),
+    ]
+
+    images = await DeviantArtProvider(
+        "id", "secret", user_token=user_token
+    ).list_images(gallery_ref())
+
+    assert [i.source_id for i in images] == ["a"]
+    assert seen_force == [False, True]
+    assert respx.mock.calls[-1].request.headers["Authorization"] == "Bearer fresh-user"
+
+
+@respx.mock
 async def test_api_error_surfaces_deviantart_detail():
     _token_route(respx.mock)
     respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(

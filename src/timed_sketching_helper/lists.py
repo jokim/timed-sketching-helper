@@ -72,6 +72,12 @@ async def get_list(
     result = db.load_list(conn, list_id)
     assert result is not None
 
+    if force_refresh:
+        # The signed image URLs just changed (and, after a DeviantArt login,
+        # so did whether they are blurred). Drop the cache index so the bytes
+        # get re-downloaded rather than served stale.
+        db.clear_cache_entries(conn, [item.source_id for item in result.items])
+
     if download_images is not None:
         await download_images(result.items)
 

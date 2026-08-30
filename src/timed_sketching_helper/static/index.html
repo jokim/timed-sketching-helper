@@ -11,6 +11,10 @@
       <!-- Start view -->
       <section id="view-start" class="view">
         <h1>Timed Sketching Helper</h1>
+        <p id="da-auth" class="status auth" hidden>
+          <span id="da-auth-text"></span>
+          <button type="button" id="da-auth-btn"></button>
+        </p>
         <form id="start-form">
           <label>
             Gallery or favourites URL
@@ -34,6 +38,10 @@
               <input id="duration" name="duration" type="number" min="1" max="3600" value="90" required />
             </label>
           </div>
+          <label class="check">
+            <input id="force-refresh" name="force-refresh" type="checkbox" />
+            Re-download images (ignore cache)
+          </label>
           <button type="submit" id="start-btn">Start practice</button>
         </form>
         <p id="start-status" class="status" hidden></p>
