@@ -203,6 +203,17 @@ def find_image_url(conn: sqlite3.Connection, source_id: str) -> str | None:
     return row["image_url"] if row else None
 
 
+def find_image_list_url(conn: sqlite3.Connection, source_id: str) -> str | None:
+    """The source URL of the (first) list a given image belongs to."""
+    row = conn.execute(
+        "SELECT il.source_url FROM list_items li"
+        " JOIN image_lists il ON il.id = li.list_id"
+        " WHERE li.source_id = ? LIMIT 1",
+        (source_id,),
+    ).fetchone()
+    return row["source_url"] if row else None
+
+
 def recent_lists(
     conn: sqlite3.Connection, account_id: int, limit: int = 10
 ) -> list[sqlite3.Row]:

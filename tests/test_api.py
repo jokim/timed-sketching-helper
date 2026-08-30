@@ -166,10 +166,6 @@ def test_logout_disconnects(auth_client, conn):
 
 @respx.mock
 def test_create_list_then_read_and_recent(client):
-    respx.mock.get(url__startswith="https://img.example/").mock(
-        return_value=httpx.Response(200, content=b"x", headers={"Content-Type": "image/png"})
-    )
-
     created = client.post("/api/lists", json={"url": GALLERY_URL}).json()
     assert created["count"] == 3
 
@@ -227,6 +223,109 @@ def test_image_endpoint_serves_cached_bytes(client):
 
 def test_image_endpoint_404_for_unknown_id(client):
     assert client.get("/api/images/nope").status_code == 404
+
+
+@respx.mock
+def test_create_list_does_not_download_image_bytes(client, conn):
+    route = respx.mock.get(url__startswith="https://img.example/").mock(
+        return_value=httpx.Response(200, content=b"x", headers={"Content-Type": "image/png"})
+    )
+
+    created = client.post("/api/lists", json={"url": GALLERY_URL}).json()
+
+    assert created["count"] == 3
+    assert route.call_count == 0
+    assert db_module.get_cache_entry(conn, "a") is None
+
+
+@respx.mock
+def test_image_endpoint_downloads_on_demand(client, conn):
+    respx.mock.get(url__startswith="https://img.example/").mock(
+        return_value=httpx.Response(200, content=b"BYTES", headers={"Content-Type": "image/png"})
+    )
+    client.post("/api/lists", json={"url": GALLERY_URL})
+    assert db_module.get_cache_entry(conn, "b") is None
+
+    res = client.get("/api/images/b")
+
+    assert res.status_code == 200
+    assert res.content == b"BYTES"
+    assert db_module.get_cache_entry(conn, "b") is not None
+
+
+@respx.mock
+def test_create_session_precaches_only_the_shown_images(client, conn):
+    respx.mock.get(url__startswith="https://img.example/").mock(
+        return_value=httpx.Response(200, content=b"x", headers={"Content-Type": "image/png"})
+    )
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+
+    session = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 2, "duration": 30}
+    ).json()
+
+    shown = {i["source_id"] for i in session["items"]}
+    pooled = {i["source_id"] for i in session["reroll_pool"]}
+    cached = {sid for sid in ("a", "b", "c") if db_module.get_cache_entry(conn, sid)}
+    assert cached == shown
+    for sid in pooled:
+        assert db_module.get_cache_entry(conn, sid) is None
+
+
+class RotatingProvider:
+    """Hands out a fresh signed URL for each image on every re-fetch."""
+
+    name = "deviantart"
+
+    def __init__(self):
+        self.calls = 0
+
+    def matches(self, url):
+        return "deviantart.com" in url
+
+    def parse(self, url):
+        return SourceRef("deviantart", "gallery", "artist", None, url)
+
+    async def list_images(self, ref):
+        self.calls += 1
+        return [
+            ImageMeta(
+                source_id="a",
+                title="Ta",
+                author="artist",
+                image_url=f"https://img.example/a.png?sig=v{self.calls}",
+                page_url="https://www.deviantart.com/artist/art/a",
+            )
+        ]
+
+
+@respx.mock
+def test_image_endpoint_refreshes_expired_url_and_retries(conn, tmp_path):
+    provider = RotatingProvider()
+
+    def resolver(url):
+        if provider.matches(url):
+            return provider
+        raise UnknownSourceError(url)
+
+    app = create_app(
+        conn=conn, cache=ImageCache(conn, tmp_path / "cache"), resolver=resolver
+    )
+    client = TestClient(app)
+
+    respx.mock.get("https://img.example/a.png", params={"sig": "v1"}).mock(
+        return_value=httpx.Response(403)
+    )
+    respx.mock.get("https://img.example/a.png", params={"sig": "v2"}).mock(
+        return_value=httpx.Response(200, content=b"FRESH", headers={"Content-Type": "image/png"})
+    )
+
+    client.post("/api/lists", json={"url": GALLERY_URL})
+    res = client.get("/api/images/a")
+
+    assert res.status_code == 200
+    assert res.content == b"FRESH"
+    assert provider.calls == 2
 
 
 def test_prefs_round_trip(client):

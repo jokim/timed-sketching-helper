@@ -48,11 +48,19 @@ Key design points, each spanning several files:
   registry — it builds a `DeviantArtProvider` with credentials from config, because
   the registry instance is credential-less.
 
-- **Two-stage caching in `lists.get_list`.** Fetch-or-load against `image_lists`
+- **List caching in `lists.get_list`.** Fetch-or-load against `image_lists`
   with a TTL (`LIST_TTL_HOURS`, default 24h); a cache hit skips the provider
-  entirely. On a fetch it immediately calls `imagecache.ensure_many` to download
-  every image, because DeviantArt's `content.src` links are short-lived signed
-  URLs — storing the URL alone would rot. `force_refresh=True` re-fetches.
+  entirely. `force_refresh=True` re-fetches (rotating the short-lived signed
+  `content.src` URLs); `clear_image_cache=True` *also* drops the list's
+  `image_cache` rows (the "Re-download images" / un-blur path).
+
+- **Image bytes are cached lazily, not up front.** `get_list` no longer
+  downloads anything. `GET /api/images/{id}` downloads on demand via
+  `create_app.ensure_image`, which — if the stored signed URL has expired —
+  re-fetches the list once (`force_refresh=True`, under a per-list
+  `asyncio.Lock`) to rotate the URLs and retries. `POST /api/sessions` kicks
+  off a `BackgroundTasks` job (`create_app.precache`) that pre-downloads just
+  the session's shown images; `static/app.js` `preloadNext()` covers image N+1.
 
 - **`db.py` threads `account_id` through every query.** `current_account()` is
   hard-coded to `1`; it is the single seam where real multi-user auth would plug in.
@@ -95,6 +103,7 @@ Key design points, each spanning several files:
   signed URL — the downloaded bytes are blurred, and no URL munging undoes it.
   The fix is the user-login flow above (the linked account must have mature
   content enabled in its DeviantArt settings). Because the blur is in the bytes
-  on disk, `force_refresh=True` on a list also clears that list's `image_cache`
-  rows (`db.clear_cache_entries`) so `imagecache` re-downloads them un-blurred —
-  this is the "Re-download images" checkbox on the start screen.
+  on disk, the "Re-download images" checkbox sends `force_refresh` which the
+  `/api/lists` route maps to `clear_image_cache=True`, dropping that list's
+  `image_cache` rows (`db.clear_cache_entries`) so the bytes get re-downloaded
+  un-blurred on next view.

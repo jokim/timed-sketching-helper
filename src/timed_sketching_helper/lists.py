@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from timed_sketching_helper import db
-from timed_sketching_helper.models import ImageList, ImageMeta, ListItem
+from timed_sketching_helper.models import ImageList, ImageMeta
 from timed_sketching_helper.sources.base import SourceProvider, resolve
-
-DownloadImages = Callable[[list[ListItem]], Awaitable[None]]
 
 
 def _is_fresh(fetched_at: str, ttl_hours: int) -> bool:
@@ -49,9 +47,9 @@ async def get_list(
     url: str,
     *,
     force_refresh: bool = False,
+    clear_image_cache: bool = False,
     ttl_hours: int = 24,
     resolver: Callable[[str], SourceProvider] = resolve,
-    download_images: DownloadImages | None = None,
 ) -> ImageList:
     provider = resolver(url)
     ref = provider.parse(url)
@@ -74,13 +72,11 @@ async def get_list(
     result = db.load_list(conn, list_id)
     assert result is not None
 
-    if force_refresh:
-        # The signed image URLs just changed (and, after a DeviantArt login,
-        # so did whether they are blurred). Drop the cache index so the bytes
-        # get re-downloaded rather than served stale.
+    if clear_image_cache:
+        # After a DeviantArt login the signed URLs may now resolve to
+        # un-blurred bytes. Drop the cache index so the bytes get
+        # re-downloaded rather than served stale. (A plain force_refresh
+        # only rotates the signed URLs; the downloaded bytes stay valid.)
         db.clear_cache_entries(conn, [item.source_id for item in result.items])
-
-    if download_images is not None:
-        await download_images(result.items)
 
     return result

@@ -79,7 +79,24 @@ async def test_force_refresh_refetches(conn):
     assert [i.source_id for i in result.items] == ["a", "c"]
 
 
-async def test_force_refresh_clears_cached_images_so_they_redownload(conn):
+async def test_clear_image_cache_drops_entries_so_they_redownload(conn):
+    provider = FakeProvider([meta("a")])
+    await get_list(conn, ACCOUNT, URL, resolver=resolver_for(provider))
+    db_module.record_cache_entry(conn, "a", "image/jpeg")
+
+    await get_list(
+        conn,
+        ACCOUNT,
+        URL,
+        resolver=resolver_for(provider),
+        force_refresh=True,
+        clear_image_cache=True,
+    )
+
+    assert db_module.get_cache_entry(conn, "a") is None
+
+
+async def test_force_refresh_alone_keeps_cached_image_bytes(conn):
     provider = FakeProvider([meta("a")])
     await get_list(conn, ACCOUNT, URL, resolver=resolver_for(provider))
     db_module.record_cache_entry(conn, "a", "image/jpeg")
@@ -88,7 +105,7 @@ async def test_force_refresh_clears_cached_images_so_they_redownload(conn):
         conn, ACCOUNT, URL, resolver=resolver_for(provider), force_refresh=True
     )
 
-    assert db_module.get_cache_entry(conn, "a") is None
+    assert db_module.get_cache_entry(conn, "a") is not None
 
 
 async def test_stale_list_is_refetched(conn):
@@ -113,22 +130,13 @@ async def test_duplicate_source_ids_are_removed(conn):
     assert [i.source_id for i in result.items] == ["a", "b"]
 
 
-async def test_downloads_images_after_fetch(conn):
+async def test_get_list_does_not_download_image_bytes(conn):
     provider = FakeProvider([meta("a"), meta("b")])
-    downloaded = []
 
-    async def fake_download(items):
-        downloaded.extend(i.source_id for i in items)
+    await get_list(conn, ACCOUNT, URL, resolver=resolver_for(provider))
 
-    await get_list(
-        conn,
-        ACCOUNT,
-        URL,
-        resolver=resolver_for(provider),
-        download_images=fake_download,
-    )
-
-    assert downloaded == ["a", "b"]
+    assert db_module.get_cache_entry(conn, "a") is None
+    assert db_module.get_cache_entry(conn, "b") is None
 
 
 async def test_empty_list_raises(conn):

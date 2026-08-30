@@ -56,8 +56,12 @@ During a session: **Pause** (space), **Prev** (←), **Skip** (→),
 ## How it works
 
 - Fetched lists and downloaded image bytes are cached under `./data/`
-  (`app.db` + `cache/`). Repeat sessions on the same list start instantly and
-  work offline. A list older than `LIST_TTL_HOURS` (24 by default) is re-fetched.
+  (`app.db` + `cache/`). A list older than `LIST_TTL_HOURS` (24 by default) is
+  re-fetched.
+- Starting a session no longer waits for the whole gallery to download: each
+  image is fetched the first time it's shown, and the session's images are
+  pre-downloaded in the background. If a signed image link has expired by the
+  time you view it, the list is silently re-fetched and the image retried.
 - The backend only supplies the list and a randomized selection; the timer and
   all session controls run in the browser.
 - Sources sit behind a small provider interface (`sources/base.py`), so other

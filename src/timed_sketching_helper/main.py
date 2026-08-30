@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import sqlite3
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -28,6 +29,8 @@ from timed_sketching_helper.sources.deviantart_oauth import (
     DeviantArtOAuth,
     make_pkce_pair,
 )
+
+logger = logging.getLogger(__name__)
 
 OAUTH_STATE_COOKIE = "da_oauth_state"
 OAUTH_VERIFIER_COOKIE = "da_oauth_verifier"
@@ -99,6 +102,64 @@ def create_app(
 
     resolver = resolver or _default_resolver(cfg, _user_token)
 
+    # One lock per list source URL so a burst of image requests for the same
+    # list triggers at most one signed-URL refresh.
+    refresh_locks: dict[str, asyncio.Lock] = {}
+
+    async def ensure_image(source_id: str) -> tuple[Path, str]:
+        """Return the on-disk path + content type for an image, downloading it
+        now if needed. If the stored signed URL has expired, re-fetch the list
+        once to rotate the URLs and retry."""
+        image_url = db.find_image_url(conn, source_id)
+        if image_url is None:
+            raise CacheFetchError(f"Unknown image {source_id}.")
+        try:
+            return await cache.ensure(source_id, image_url)
+        except CacheFetchError:
+            pass
+
+        source_url = db.find_image_list_url(conn, source_id)
+        if source_url is None:
+            raise CacheFetchError(f"Image {source_id} is not part of any list.")
+        lock = refresh_locks.setdefault(source_url, asyncio.Lock())
+        async with lock:
+            # Another request may have refreshed the URLs while we waited; if
+            # so, the stored URL will have changed — try it before re-fetching.
+            fresh_url = db.find_image_url(conn, source_id)
+            if fresh_url is not None and fresh_url != image_url:
+                try:
+                    return await cache.ensure(source_id, fresh_url)
+                except CacheFetchError:
+                    pass
+            await get_list(
+                conn,
+                db.current_account(),
+                source_url,
+                force_refresh=True,
+                ttl_hours=cfg.list_ttl_hours,
+                resolver=resolver,
+            )
+            newest_url = db.find_image_url(conn, source_id)
+            if newest_url is None:
+                raise CacheFetchError(
+                    f"Image {source_id} is no longer in the source list."
+                )
+            return await cache.ensure(source_id, newest_url)
+
+    async def precache(items: list) -> None:
+        """Best-effort background download of a session's images."""
+        try:
+            await cache.ensure_many(items)
+        except Exception:  # noqa: BLE001 - a background nicety, never fatal
+            logger.exception("Pre-cache batch failed")
+        for item in items:
+            if cache.open_cached(item.source_id) is not None:
+                continue
+            try:
+                await ensure_image(item.source_id)
+            except Exception:  # noqa: BLE001
+                logger.warning("Pre-cache: could not fetch %s", item.source_id)
+
     app = FastAPI(title="Timed Sketching Helper")
 
     @app.exception_handler(UnknownSourceError)
@@ -125,9 +186,9 @@ def create_app(
             db.current_account(),
             body.url,
             force_refresh=body.force_refresh,
+            clear_image_cache=body.force_refresh,
             ttl_hours=cfg.list_ttl_hours,
             resolver=resolver,
-            download_images=cache.ensure_many,
         )
         return {
             "list_id": image_list.id,
@@ -151,12 +212,15 @@ def create_app(
         }
 
     @app.post("/api/sessions")
-    async def create_session(body: SessionRequest) -> dict:
+    async def create_session(
+        body: SessionRequest, background_tasks: BackgroundTasks
+    ) -> dict:
         image_list = db.load_list(conn, body.list_id)
         if image_list is None:
             raise HTTPException(404, "List not found.")
         by_id = {i.source_id: i for i in image_list.items}
         selected, pool = build_session(list(by_id), body.count)
+        background_tasks.add_task(precache, [by_id[s] for s in selected])
         return {
             "duration": body.duration,
             "items": [_item_dto(by_id[s]) for s in selected],
@@ -165,11 +229,10 @@ def create_app(
 
     @app.get("/api/images/{source_id}")
     async def read_image(source_id: str) -> FileResponse:
-        image_url = db.find_image_url(conn, source_id)
-        if image_url is None:
+        if db.find_image_url(conn, source_id) is None:
             raise HTTPException(404, "Unknown image.")
         try:
-            path, content_type = await cache.ensure(source_id, image_url)
+            path, content_type = await ensure_image(source_id)
         except CacheFetchError:
             raise HTTPException(
                 502, "Image link expired. Refresh the list to fetch it again."
