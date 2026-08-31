@@ -41,6 +41,8 @@ def _title_for(ref) -> str:
         return f"#{ref.tag}"
     if ref.kind == "search":
         return f'Search: "{ref.query}"'
+    if ref.kind == "morelikethis":
+        return f"More like {ref.username} #{ref.seed}"
     label = "favourites" if ref.kind == "favourites" else "gallery"
     if ref.folder_id:
         return f"{ref.username} · {label} · {ref.folder_slug or ref.folder_id}"

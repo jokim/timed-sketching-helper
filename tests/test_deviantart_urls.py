@@ -122,6 +122,27 @@ def test_parse_rejects_tag_url_without_a_tag(provider):
         provider.parse("https://www.deviantart.com/tag/")
 
 
+def test_parses_morelikethis_url(provider):
+    ref = provider.parse(
+        "https://www.deviantart.com/morelikethis/ArtofdanPhotography/727534988"
+    )
+    assert ref.provider == "deviantart"
+    assert ref.kind == "morelikethis"
+    assert ref.username == "ArtofdanPhotography"
+    assert ref.seed == "727534988"
+    assert ref.folder_id is None
+    assert ref.raw_url == (
+        "https://www.deviantart.com/morelikethis/ArtofdanPhotography/727534988"
+    )
+
+
+def test_parse_rejects_morelikethis_url_without_a_seed(provider):
+    with pytest.raises(ValueError):
+        provider.parse("https://www.deviantart.com/morelikethis/ArtofdanPhotography")
+    with pytest.raises(ValueError):
+        provider.parse("https://www.deviantart.com/morelikethis/")
+
+
 def test_matches_only_deviantart_hosts(provider):
     assert provider.matches("https://www.deviantart.com/someuser/gallery/all")
     assert provider.matches("https://someuser.deviantart.com/gallery")

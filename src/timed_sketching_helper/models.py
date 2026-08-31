@@ -10,13 +10,14 @@ class SourceRef:
     """A normalized reference to a list of images on some external site."""
 
     provider: str
-    kind: str  # "gallery" | "favourites" | "tag" | "search"
+    kind: str  # "gallery" | "favourites" | "tag" | "search" | "morelikethis"
     username: str  # "" for kinds that are not user-scoped (e.g. "tag")
     folder_id: str | None  # None means the provider's "all" folder
     raw_url: str
     tag: str | None = None  # set only when kind == "tag"
     folder_slug: str | None = None  # the URL's trailing folder-name segment, if any
     query: str | None = None  # set only when kind == "search"
+    seed: str | None = None  # the seed deviation id, set only when kind == "morelikethis"
 
 
 @dataclass(frozen=True)

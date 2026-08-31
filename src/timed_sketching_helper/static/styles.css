@@ -137,13 +137,22 @@ h1 {
 .field { display: block; margin: 0 0 14px; }
 
 .field-label {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+.field-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--fg);
 }
 
 input[type="url"],
@@ -160,6 +169,18 @@ input[type="url"]:focus,
 input[type="number"]:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+input[type="range"] {
+  width: 100%;
+  margin: 6px 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
 }
 
 .row { display: flex; gap: 14px; }
@@ -417,15 +438,51 @@ kbd {
 }
 .card .row button:hover { border-color: var(--accent); color: var(--fg); }
 
+/* ---- Done-screen actions ---------------------------------------------- */
+
+.done-actions {
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.done-actions button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 12px 14px;
+}
+.done-actions button svg { flex: none; }
+.done-actions button.primary {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.done-actions button.primary:hover {
+  background: var(--accent-hi);
+  border-color: var(--accent-hi);
+  color: var(--accent-ink);
+}
+
+.fav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.fav-toggle svg { flex: none; }
+.fav-toggle[aria-pressed="true"] svg { fill: var(--accent-hi); }
+
 /* ---- Session -------------------------------------------------------- */
 
 #view-session {
   display: grid;
-  gap: 10px;
-  padding: 10px;
+  gap: 8px;
+  padding: 8px;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 #view-session[data-dock="top"] {
   grid-template-rows: auto minmax(0, 1fr);
@@ -482,6 +539,8 @@ kbd {
 #stage.loading #stage-img { opacity: 0; transition: none; }
 #stage-spinner {
   position: absolute;
+  inset: 0;
+  margin: auto;
   width: 30px;
   height: 30px;
   border: 3px solid rgba(255, 255, 255, 0.16);
@@ -597,8 +656,8 @@ kbd {
   grid-area: controls;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 6px 8px;
   background: var(--panel);
   border: 1px solid var(--border-soft);
   border-radius: 12px;
@@ -607,13 +666,13 @@ kbd {
 #view-session[data-dock="right"] #controls {
   flex-direction: column;
   align-items: stretch;
-  width: 208px;
-  padding: 14px 12px;
+  width: 168px;
+  padding: 10px 10px;
 }
 
 .ctrl-group {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 #view-session[data-dock="left"] .ctrl-group,
@@ -621,15 +680,29 @@ kbd {
   flex-direction: column;
 }
 
-.ctrl-spacer { flex: 1 1 auto; min-height: 0; }
+.ctrl-secondary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+#view-session[data-dock="left"] .ctrl-secondary,
+#view-session[data-dock="right"] .ctrl-secondary {
+  flex-direction: column;
+  align-items: stretch;
+  margin-left: 0;
+  margin-top: auto;
+}
+
+.compact-toggle .icon-expand { display: none; }
 
 #controls button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 9px 13px;
-  font: 500 13px/1 system-ui, sans-serif;
+  gap: 6px;
+  padding: 6px 9px;
+  font: 500 12px/1 system-ui, sans-serif;
   color: var(--fg-dim);
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -639,11 +712,13 @@ kbd {
 }
 #controls button:hover { color: var(--fg); border-color: var(--accent); }
 
-#controls .end {
+#controls .end,
+#controls .compact-toggle {
   background: transparent;
   color: var(--fg-dim);
 }
-#controls .end:hover { color: var(--accent); border-color: var(--accent); }
+#controls .end:hover,
+#controls .compact-toggle:hover { color: var(--accent); border-color: var(--accent); }
 
 .dock {
   display: flex;
@@ -670,6 +745,104 @@ kbd {
   background: var(--accent);
 }
 
+/* ---- Minimized: floating icon-only toolbar ------------------------- */
+
+#view-session[data-compact] {
+  padding: 0;
+  gap: 0;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "stage";
+}
+#view-session[data-compact] #stage {
+  border: none;
+  border-radius: 0;
+}
+
+#view-session[data-compact] #controls {
+  position: absolute;
+  z-index: 5;
+  width: auto;
+  padding: 0;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  opacity: 0.01;
+  transition: opacity 0.5s ease-out;
+}
+/* Pointer active in the last 2s (body[data-activity], set by app.js), or the
+   toolbar itself hovered/focused: bring it fully back, quickly. */
+body[data-activity] #view-session[data-compact] #controls,
+#view-session[data-compact] #controls:hover,
+#view-session[data-compact] #controls:focus-within {
+  opacity: 1;
+  transition: opacity 0.15s ease;
+}
+
+#view-session[data-compact][data-dock="top"] #controls {
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: row;
+  align-items: center;
+}
+#view-session[data-compact][data-dock="bottom"] #controls {
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  flex-direction: row;
+  align-items: center;
+}
+#view-session[data-compact][data-dock="left"] #controls {
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: column;
+  align-items: center;
+}
+#view-session[data-compact][data-dock="right"] #controls {
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  flex-direction: column;
+  align-items: center;
+}
+
+#view-session[data-compact] #controls .lbl { display: none; }
+#view-session[data-compact] #controls button {
+  padding: 8px;
+  color: var(--fg);
+  background: rgba(20, 22, 24, 0.72);
+  border-color: var(--border);
+  backdrop-filter: blur(6px);
+}
+#view-session[data-compact] #controls .ctrl-group,
+#view-session[data-compact] #controls .ctrl-secondary {
+  margin: 0;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+#view-session[data-compact][data-dock="left"] #controls .ctrl-group,
+#view-session[data-compact][data-dock="right"] #controls .ctrl-group,
+#view-session[data-compact][data-dock="left"] #controls .ctrl-secondary,
+#view-session[data-compact][data-dock="right"] #controls .ctrl-secondary {
+  flex-direction: column;
+  align-items: center;
+}
+
+/* secondary controls read a touch quieter than the nav cluster */
+#view-session[data-compact] #controls .ctrl-secondary { opacity: 0.85; }
+
+/* the dock-position switcher has no place on the floating bar */
+#view-session[data-compact] #controls .dock { display: none; }
+
+/* toggle the collapse / expand glyph */
+#view-session[data-compact] .compact-toggle .icon-collapse { display: none; }
+#view-session[data-compact] .compact-toggle .icon-expand { display: block; }
+
+/* keep the zoom buttons clear of a right-docked floating bar */
+#view-session[data-compact][data-dock="right"] #zoom { right: 62px; }
+
 /* ---- Small screens: force a top toolbar ---------------------------- */
 
 @media (max-width: 640px) {
@@ -688,6 +861,33 @@ kbd {
   }
   #view-session[data-dock="left"] .ctrl-group,
   #view-session[data-dock="right"] .ctrl-group {
+    flex-direction: row;
+  }
+  #view-session[data-dock="left"] .ctrl-secondary,
+  #view-session[data-dock="right"] .ctrl-secondary {
+    flex-direction: row;
+    align-items: center;
+    margin-top: 0;
+    margin-left: auto;
+  }
+}
+
+/* small-screen compact bar: horizontal, top edge, clear of the HUD */
+@media (max-width: 640px) {
+  #view-session[data-compact][data-dock="left"] #controls,
+  #view-session[data-compact][data-dock="right"] #controls {
+    top: 64px;
+    bottom: auto;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    flex-direction: row;
+    align-items: center;
+  }
+  #view-session[data-compact][data-dock="left"] #controls .ctrl-group,
+  #view-session[data-compact][data-dock="right"] #controls .ctrl-group,
+  #view-session[data-compact][data-dock="left"] #controls .ctrl-secondary,
+  #view-session[data-compact][data-dock="right"] #controls .ctrl-secondary {
     flex-direction: row;
   }
 }

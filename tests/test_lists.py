@@ -66,6 +66,15 @@ def test_title_for_tag():
     assert _title_for(ref) == "#hamster"
 
 
+def test_title_for_morelikethis():
+    ref = SourceRef(
+        "deviantart", "morelikethis", "ArtofdanPhotography", None,
+        "https://www.deviantart.com/morelikethis/ArtofdanPhotography/727534988",
+        seed="727534988",
+    )
+    assert _title_for(ref) == "More like ArtofdanPhotography #727534988"
+
+
 async def test_first_fetch_persists_and_returns_items(conn):
     provider = FakeProvider([meta("a"), meta("b")])
 

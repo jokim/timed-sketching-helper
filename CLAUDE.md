@@ -119,10 +119,15 @@ Key design points, each spanning several files:
   objects (in `preloaded`) so the bytes stay decoded.
 
 - **The countdown is gated on the image.** `renderCurrent()` blanks the stage
-  (`#stage.loading`, with a delayed spinner) and holds the timer at full until
-  `#stage-img` has decoded (`img.decode()`, or `load`/`error`), then
-  `beginImage()` starts the ticker. A monotonic `renderToken` guards against a
-  slow load resolving after the user has already moved on (prev/skip/reroll).
+  (`#stage.loading`, `#stage-img` → `opacity:0`, with a delayed spinner) and
+  holds the timer at full. It loads the next image into a **detached** `Image`
+  (reusing the `preloaded` entry when present) and only assigns `#stage-img.src`
+  once that has decoded (`Image.decode()`, or `load`/`error`) — pointing the
+  live element straight at a plain URL keeps it painting the *previous* frame
+  for the whole download, and `img.decode()` on the live element can resolve
+  against that stale frame. `beginImage()` then clears `#stage.loading` and
+  starts the ticker. A monotonic `renderToken` guards against a slow load
+  resolving after the user has already moved on (prev/skip/reroll).
 
 - **`db.py` threads `account_id` through every query.** `current_account()` is
   hard-coded to `1`; it is the single seam where real multi-user auth would plug in.
@@ -159,7 +164,12 @@ Key design points, each spanning several files:
   <numeric>` silently returns the wrong deviations. `parse()` keeps the trailing
   `<name-slug>` as `SourceRef.folder_slug`; `_target_folder_ids` treats any
   non-UUID `folder_id` (`_is_api_folder_id`) as a name to resolve through
-  `/{endpoint}/folders`, matching `folder_slug` (`-`→space) against `name`.
+  `/{endpoint}/folders`, matching `_slugify(folder_slug)` against
+  `_slugify(name)` — the URL slug drops the punctuation the real folder name
+  carries ("Confused, bi-product of a misinformed culture" →
+  `confused-bi-product-of-a-misinformed-culture`), so both sides are slugified
+  (lowercase, non-alphanumeric runs → `-`) rather than compared with a naive
+  `-`→space swap.
 - `mature_content` must be sent on every browse request; `_get()` always adds it.
   Its value is `"true"` only while a logged-in user token is active
   (`_get_token` sets `_token_is_user`), `"false"` anonymously. This param is
@@ -184,6 +194,23 @@ Key design points, each spanning several files:
   `/browse/home?q=` — the only browse endpoint that still takes a `q` (the old
   `/browse/{newest,popular}` 404 now). `SourceRef` has `kind="search"`,
   `username=""`, and `query` set; `list_images` branches on it like `tag`.
+- `deviantart.com/morelikethis/<username>/<numeric-id>` maps to
+  `/browse/morelikethis/preview?seed=<UUID>`. `SourceRef` has
+  `kind="morelikethis"`, `username` set, and `seed` = the URL's *legacy numeric*
+  deviation id. The paginated `/browse/morelikethis` endpoint was **removed**
+  from the API (like `/browse/newest` / `/browse/popular`); only the
+  non-paginated `.../preview` remains, and its `seed` must be the **UUID**
+  `deviationid` — the numeric id 400s ("Request field validation failed", same
+  as `/collections/<numeric>`). No API call maps numeric→UUID, so
+  `_resolve_seed_uuid` fetches the deviation's own web page
+  (`https://www.deviantart.com/<username>/art/x-<numeric-id>` — any slug works,
+  unauthenticated) and pulls the UUID out of the embedded Redux state
+  (`_seed_uuid_from_page`: `\"<numeric-id>\":{\"deviationUuid\":\"<UUID>\"`).
+  `_iter_morelikethis` then makes the preview request and yields the
+  `more_from_da` (similar across DA) then `more_from_artist` (seed author's
+  other work) arrays; `_collect` de-dupes the overlap. `parse()` requires both
+  the `<username>` and `<numeric-id>` segments (the `/morelikethis/<numeric-id>`
+  form without a username 404s on the site).
 - The authorize endpoint now rejects requests without a PKCE `code_challenge`
   (`make_pkce_pair()` builds the S256 pair).
 - Client-credentials tokens are treated as anonymous, so `content.src` for

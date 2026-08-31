@@ -35,6 +35,18 @@ def _is_api_folder_id(value: str) -> bool:
     return bool(_UUID_RE.match(value))
 
 
+def _slugify(name: str) -> str:
+    """Reduce a folder name to the slug DeviantArt puts in its folder URLs.
+
+    A `deviantart.com/<user>/gallery/<numeric-id>/<slug>` URL's trailing slug is
+    the folder name lowercased with every run of non-alphanumerics collapsed to a
+    single hyphen ("Confused, bi-product of a misinformed culture" ->
+    "confused-bi-product-of-a-misinformed-culture"). Comparing slugified names is
+    punctuation-proof where a naive "-" -> " " swap is not.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
 # DeviantArt serves sensitive deviations the viewer may not see (logged out, or
 # an account with mature content disabled) as a blurred rendition: the wixmp
 # transform segment carries a `,blur_<n>` param, e.g.
@@ -46,6 +58,24 @@ _BLURRED_SRC_RE = re.compile(r"/v1/[a-z]+/[^/]*,blur_\d")
 
 def _is_blurred_src(src: str) -> bool:
     return bool(_BLURRED_SRC_RE.search(src))
+
+
+_UUID_CHARS = r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}"
+
+
+def _seed_uuid_from_page(html: str, numeric_id: str) -> str | None:
+    """Pull a deviation's API ``deviationid`` (a UUID) out of its web page.
+
+    A DeviantArt deviation page embeds a Redux state blob whose
+    ``deviationExtended`` map is keyed by the legacy numeric id and carries the
+    UUID as ``deviationUuid`` (JSON-escaped inside a ``<script>`` string), e.g.
+    ``\\"727534988\\":{\\"deviationUuid\\":\\"F91963F8-...\\"``.
+    """
+    match = re.search(
+        rf'{re.escape(numeric_id)}\\?":\{{\\?"deviationUuid\\?":\\?"({_UUID_CHARS})',
+        html,
+    )
+    return match.group(1) if match else None
 
 
 class _Progress:
@@ -163,6 +193,26 @@ class DeviantArtProvider:
                 tag=tag,
             )
 
+        # deviantart.com/morelikethis/<username>/<seed> — the site's "more like
+        # this" feed for one deviation. `seed` is the legacy numeric deviation
+        # id from the URL; list_images resolves it to the UUID the API needs.
+        if segments and segments[0].lower() == "morelikethis" and host in {
+            "deviantart.com",
+            "www.deviantart.com",
+        }:
+            if len(segments) < 3 or not segments[1] or not segments[2]:
+                raise ValueError(
+                    f"DeviantArt morelikethis URL needs a username and a seed id: {url!r}"
+                )
+            return SourceRef(
+                provider=self.name,
+                kind="morelikethis",
+                username=segments[1],
+                folder_id=None,
+                raw_url=url,
+                seed=segments[2],
+            )
+
         # deviantart.com/search?q=<query> (also /search/deviations?q=…) — the
         # site-wide search feed, not user-scoped.
         if segments and segments[0].lower() == "search" and host in {
@@ -233,6 +283,10 @@ class DeviantArtProvider:
                     ),
                     progress,
                 )
+            elif ref.kind == "morelikethis":
+                images = await self._collect(
+                    self._iter_morelikethis(client, ref, progress), progress
+                )
             else:
                 endpoint = "gallery" if ref.kind == "gallery" else "collections"
                 folder_ids = await self._target_folder_ids(
@@ -260,6 +314,56 @@ class DeviantArtProvider:
                 client, f"/{endpoint}/{folder_id}", {"username": username}, progress
             ):
                 yield deviation
+
+    async def _iter_morelikethis(
+        self,
+        client: httpx.AsyncClient,
+        ref: SourceRef,
+        progress: _Progress,
+    ):
+        # /browse/morelikethis/preview is a single, non-paginated request. The
+        # older paginated /browse/morelikethis was removed from the API (like
+        # /browse/newest and /browse/popular). Its `seed` must be the UUID
+        # deviationid — the legacy numeric id in the URL 400s — so resolve the
+        # UUID off the deviation's own web page first.
+        seed = await self._resolve_seed_uuid(client, ref, progress)
+        payload = await self._get(
+            client, "/browse/morelikethis/preview", params={"seed": seed}
+        )
+        progress.request_done()
+        # more_from_da is the "similar across DeviantArt" bucket; more_from_artist
+        # is the seed author's other work. _collect de-dupes the overlap.
+        for key in ("more_from_da", "more_from_artist"):
+            for deviation in payload.get(key) or []:
+                yield deviation
+
+    async def _resolve_seed_uuid(
+        self,
+        client: httpx.AsyncClient,
+        ref: SourceRef,
+        progress: _Progress,
+    ) -> str:
+        """Resolve a morelikethis URL's numeric seed to its UUID deviationid.
+
+        There is no API call that maps a legacy numeric id (or a deviation URL)
+        to the UUID the API wants, but the deviation's own web page embeds it.
+        Any slug works as long as the URL ends in ``-<numeric id>``.
+        """
+        page_url = f"https://www.deviantart.com/{ref.username}/art/x-{ref.seed}"
+        response = await client.get(page_url, follow_redirects=True)
+        progress.request_done()
+        if response.status_code >= 400:
+            raise DeviantArtApiError(
+                f"Could not load the seed deviation page {page_url} "
+                f"(HTTP {response.status_code}) to resolve its id."
+            )
+        seed_uuid = _seed_uuid_from_page(response.text, ref.seed)
+        if seed_uuid is None:
+            raise DeviantArtApiError(
+                f"Could not find the deviation id for seed {ref.seed!r} on "
+                f"{page_url}."
+            )
+        return seed_uuid
 
     async def _collect(self, deviations, progress: _Progress) -> list[ImageMeta]:
         images: list[ImageMeta] = []
@@ -345,9 +449,9 @@ class DeviantArtProvider:
         progress: _Progress,
     ) -> str:
         name = ref.folder_slug or ref.folder_id
-        wanted = name.replace("-", " ").lower()
+        wanted = _slugify(name)
         for folder in await self._folders(client, endpoint, ref.username, progress):
-            if folder.get("name", "").lower() == wanted:
+            if _slugify(folder.get("name", "")) == wanted:
                 return str(folder["folderid"])
         raise DeviantArtApiError(
             f"DeviantArt {endpoint} folder not found: {name!r}"

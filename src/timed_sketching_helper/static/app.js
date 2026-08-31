@@ -39,6 +39,33 @@ function setDock(pos) {
   }
 }
 
+// ---- Minimized toolbar (icon-only, floating over the image) -------------
+
+const COMPACT_KEY = "tsh:compact";
+
+function readCompact() {
+  try {
+    return localStorage.getItem(COMPACT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setCompact(on) {
+  if (on) views.session.dataset.compact = "";
+  else delete views.session.dataset.compact;
+  try {
+    localStorage.setItem(COMPACT_KEY, on ? "1" : "0");
+  } catch {
+    /* private mode / blocked storage — still applies for this session */
+  }
+  const btn = $("#controls button[data-action=compact]");
+  if (btn) {
+    btn.setAttribute("aria-pressed", String(on));
+    btn.title = on ? "Expand toolbar" : "Minimize toolbar";
+  }
+}
+
 async function api(path, options) {
   const res = await fetch(path, options);
   const body = await res.json().catch(() => ({}));
@@ -256,11 +283,37 @@ function showAuthReturnMessage() {
   window.history.replaceState({}, "", window.location.pathname);
 }
 
+function formatDuration(seconds) {
+  const s = Number(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}m ${rem}s` : `${m}m`;
+}
+
+const rangeSyncs = [];
+
+function initRangeInputs() {
+  const bind = (id, format) => {
+    const input = $(`#${id}`);
+    const out = $(`#${id}-value`);
+    const sync = () => {
+      out.textContent = format(input.value);
+    };
+    input.addEventListener("input", sync);
+    sync();
+    rangeSyncs.push(sync);
+  };
+  bind("count", (v) => String(v));
+  bind("duration", formatDuration);
+}
+
 async function loadPrefs() {
   try {
     const prefs = await api("/api/prefs");
     $("#count").value = prefs.default_count;
     $("#duration").value = prefs.default_duration;
+    rangeSyncs.forEach((sync) => sync());
   } catch {
     /* keep the HTML defaults */
   }
@@ -482,6 +535,7 @@ function initZoomControls() {
   );
 
   stage.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("#zoom")) return;
     if (zoomView.z <= 1.001 || event.button !== 0) return;
     zoomView.dragging = true;
     zoomView.sx = event.clientX - zoomView.tx;
@@ -565,9 +619,9 @@ function renderCurrent() {
 
   resetZoom();
 
-  // Blank the stage and hold the countdown at full until the image has
-  // actually decoded: the timer must not run against a picture the user can't
-  // see yet, and the previous image must not linger underneath.
+  // Blank the stage and hold the countdown at full until the next image is
+  // ready: the timer must not run against a picture the user can't see yet,
+  // and the previous image must not linger underneath.
   session.remaining = state.duration;
   $("#stage").classList.add("loading");
   const bar = $("#time-bar");
@@ -577,20 +631,30 @@ function renderCurrent() {
   }
   updateTimer();
 
-  const img = $("#stage-img");
-  img.onload = null;
-  img.onerror = null;
-  img.src = imageUrl(item);
-  // `img.complete` / `naturalWidth` still report the *previous* image for a
-  // tick after the src assignment, so they can't gate this — `decode()` tracks
-  // the pending request and resolves as soon as the new bytes are ready
-  // (near-instant for a prefetched image).
-  const settle = () => beginImage(token);
-  if (img.decode) {
-    img.decode().then(settle, settle);
+  // A plain `#stage-img.src = url` keeps painting the *previous* image for the
+  // whole download, and `img.decode()` right after a src change can resolve
+  // against that old frame (the load is deferred to a microtask). So load into
+  // a detached Image and only swap the on-screen element once its bytes are
+  // decoded — then the visible <img> is never mid-download.
+  const url = imageUrl(item);
+  const loader = preloaded.get(item.source_id) || new Image();
+  if (!loader.src) loader.src = url;
+
+  const reveal = () => {
+    if (token !== renderToken) return; // superseded by a newer navigation
+    const img = $("#stage-img");
+    img.src = url; // already fetched + decoded — this swap can't show a gap
+    requestAnimationFrame(() => {
+      if (token === renderToken) beginImage(token);
+    });
+  };
+  if (loader.decode) {
+    loader.decode().then(reveal, reveal);
+  } else if (loader.complete) {
+    reveal();
   } else {
-    img.onload = settle;
-    img.onerror = settle;
+    loader.onload = reveal;
+    loader.onerror = reveal;
   }
 
   preloadAhead();
@@ -678,7 +742,9 @@ function renderFavButton() {
   if (!state.listUrl) return;
   const favd = isFavorite(state.listUrl);
   btn.setAttribute("aria-pressed", String(favd));
-  btn.textContent = favd ? "★ Saved to favorites" : "☆ Save to favorites";
+  btn.querySelector(".fav-lbl").textContent = favd
+    ? "Saved to favorites"
+    : "Save this reference to favorites";
 }
 
 function finishSession() {
@@ -719,6 +785,7 @@ $("#controls").addEventListener("click", (event) => {
   else if (action === "pause") togglePause();
   else if (action === "reroll") reroll();
   else if (action === "end") endSession();
+  else if (action === "compact") setCompact(!readCompact());
 });
 
 document.addEventListener("keydown", (event) => {
@@ -727,6 +794,7 @@ document.addEventListener("keydown", (event) => {
   else if (event.key === "ArrowLeft") prev();
   else if (event.key === "ArrowRight") next();
   else if (event.key === "r" || event.key === "R") reroll();
+  else if (event.key === "Escape" || event.key === "q" || event.key === "Q") endSession();
   else if (event.key === "+" || event.key === "=") zoomBy(1.4);
   else if (event.key === "-" || event.key === "_") zoomBy(1 / 1.4);
 });
@@ -738,10 +806,37 @@ $("#new-btn").addEventListener("click", () => {
   show("start");
 });
 
+// ---- Pointer-idle watcher ----------------------------------------------
+//
+// Stamps document.body.dataset.activity while the pointer (or keyboard) is
+// active and clears it after 2s of stillness. Only the compact toolbar reacts
+// to it (in styles.css): it fades away when idle so the reference image is
+// unobstructed, and snaps back the instant the mouse moves.
+
+const IDLE_MS = 2000;
+
+function initIdleWatcher() {
+  let idle = null;
+  const wake = () => {
+    if (!("activity" in document.body.dataset)) document.body.dataset.activity = "";
+    clearTimeout(idle);
+    idle = setTimeout(() => {
+      delete document.body.dataset.activity;
+    }, IDLE_MS);
+  };
+  for (const evt of ["mousemove", "pointerdown", "keydown"]) {
+    document.addEventListener(evt, wake, { passive: true });
+  }
+  wake();
+}
+
 // ---- Boot ----------------------------------------------------------------
 
 setDock(readDock());
+setCompact(readCompact());
+initIdleWatcher();
 initZoomControls();
+initRangeInputs();
 renderSaved();
 loadPrefs();
 loadAuthStatus();

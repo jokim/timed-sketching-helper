@@ -229,6 +229,104 @@ async def test_list_images_fetches_search_query_via_browse_home():
     assert route.calls[0].request.url.params["q"] == "posing"
 
 
+def morelikethis_ref(seed="727534988", username="artist"):
+    return SourceRef(
+        provider="deviantart",
+        kind="morelikethis",
+        username=username,
+        folder_id=None,
+        raw_url=f"https://www.deviantart.com/morelikethis/{username}/{seed}",
+        seed=seed,
+    )
+
+
+SEED_UUID = "F91963F8-6C67-3B8D-C837-3299168FEBA7"
+
+
+def _seed_page_html(seed="727534988", uuid=SEED_UUID):
+    # Mirrors the escaped Redux SSR state DeviantArt embeds in a deviation page.
+    return (
+        '<!doctype html><script>window.__REE__.emit("cacheReady","'
+        '{\\"deviationExtended\\":{\\"' + seed + '\\":{\\"deviationUuid\\":\\"'
+        + uuid + '\\",\\"isDaPro\\":false}}}");</script>'
+    )
+
+
+@respx.mock
+async def test_list_images_morelikethis_resolves_seed_uuid_from_deviation_page():
+    # The API rejects the URL's numeric id, so the provider reads the UUID
+    # deviationid out of the deviation page's embedded state and seeds the
+    # /browse/morelikethis/preview call with that.
+    _token_route(respx.mock)
+    page = respx.mock.get(
+        "https://www.deviantart.com/artist/art/x-727534988"
+    ).mock(return_value=httpx.Response(200, html=_seed_page_html()))
+    preview = respx.mock.get(
+        url__startswith=f"{API_BASE}/browse/morelikethis/preview"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "seed": SEED_UUID,
+                "author": {"username": "artist"},
+                "more_from_da": [_deviation("da1"), _deviation("da2")],
+                "more_from_artist": [_deviation("art1"), _deviation("da1")],
+            },
+        )
+    )
+
+    images = await DeviantArtProvider("id", "secret").list_images(
+        morelikethis_ref("727534988")
+    )
+
+    # more_from_da first, then more_from_artist, de-duplicated.
+    assert [i.source_id for i in images] == ["da1", "da2", "art1"]
+    assert page.called
+    assert preview.calls[0].request.url.params["seed"] == SEED_UUID
+
+
+@respx.mock
+async def test_list_images_morelikethis_raises_when_seed_page_is_missing():
+    _token_route(respx.mock)
+    respx.mock.get("https://www.deviantart.com/artist/art/x-727534988").mock(
+        return_value=httpx.Response(404, html="<title>DeviantArt: 404</title>")
+    )
+
+    with pytest.raises(DeviantArtApiError):
+        await DeviantArtProvider("id", "secret").list_images(
+            morelikethis_ref("727534988")
+        )
+
+
+@respx.mock
+async def test_list_images_morelikethis_raises_when_uuid_not_in_page():
+    _token_route(respx.mock)
+    respx.mock.get("https://www.deviantart.com/artist/art/x-727534988").mock(
+        return_value=httpx.Response(200, html="<!doctype html><body>no state here</body>")
+    )
+
+    with pytest.raises(DeviantArtApiError):
+        await DeviantArtProvider("id", "secret").list_images(
+            morelikethis_ref("727534988")
+        )
+
+
+@respx.mock
+async def test_list_images_morelikethis_surfaces_api_errors():
+    _token_route(respx.mock)
+    respx.mock.get("https://www.deviantart.com/artist/art/x-727534988").mock(
+        return_value=httpx.Response(200, html=_seed_page_html())
+    )
+    respx.mock.get(
+        url__startswith=f"{API_BASE}/browse/morelikethis/preview"
+    ).mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+
+    with pytest.raises(DeviantArtApiError):
+        await DeviantArtProvider("id", "secret").list_images(
+            morelikethis_ref("727534988")
+        )
+
+
 @respx.mock
 async def test_list_images_skips_entries_without_content():
     _token_route(respx.mock)
@@ -339,6 +437,54 @@ async def test_list_images_resolves_numeric_url_folder_id_via_name_slug():
         folder_id="61706897",
         raw_url="https://www.deviantart.com/artist/favourites/61706897/model-stocks",
         folder_slug="model-stocks",
+    )
+    images = await DeviantArtProvider("id", "secret").list_images(ref)
+
+    assert folders.called
+    assert contents.called
+    assert [i.source_id for i in images] == ["a"]
+
+
+@respx.mock
+async def test_list_images_matches_folder_slug_ignoring_punctuation():
+    # deviantart.com/<user>/gallery/<numeric>/<slug>: the trailing slug drops
+    # the punctuation the real folder name carries ("Confused, bi-product of a
+    # misinformed culture" -> "confused-bi-product-of-a-misinformed-culture"),
+    # so the resolver must compare slugified names, not a naive dash->space swap.
+    _token_route(respx.mock)
+    folders = respx.mock.get(url__startswith=f"{API_BASE}/gallery/folders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "folderid": "7BE985EE-FBDD-B030-80A8-27AC6C590CBD",
+                        "name": "Confused, bi-product of a misinformed culture",
+                    },
+                    {"folderid": "0D62C448-0422-34F1-78DC-89D94ABE6D5F",
+                     "name": "Sketches"},
+                ]
+            },
+        )
+    )
+    contents = respx.mock.get(
+        url__startswith=f"{API_BASE}/gallery/7BE985EE-FBDD-B030-80A8-27AC6C590CBD"
+    ).mock(
+        return_value=httpx.Response(
+            200, json={"results": [_deviation("a")], "has_more": False}
+        )
+    )
+
+    ref = SourceRef(
+        provider="deviantart",
+        kind="gallery",
+        username="matthieucolnat",
+        folder_id="75383758",
+        raw_url=(
+            "https://www.deviantart.com/matthieucolnat/gallery/75383758/"
+            "confused-bi-product-of-a-misinformed-culture"
+        ),
+        folder_slug="confused-bi-product-of-a-misinformed-culture",
     )
     images = await DeviantArtProvider("id", "secret").list_images(ref)
 
