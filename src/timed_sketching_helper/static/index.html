@@ -55,10 +55,39 @@
                   <input id="duration" name="duration" type="range" min="10" max="600" step="5" value="90" required />
                 </label>
               </div>
-              <label class="check">
-                <input id="force-refresh" name="force-refresh" type="checkbox" />
-                <span>Re-download images — ignore the local cache</span>
-              </label>
+              <details class="advanced">
+                <summary>Advanced options</summary>
+                <label class="field advanced-field">
+                  <span class="field-label">Limit images fetched</span>
+                  <input
+                    id="max-images"
+                    name="max-images"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputmode="numeric"
+                    placeholder="No limit set, defaults to max 1000"
+                  />
+                  <span class="field-hint">Fetch fewer images to skip a long load.</span>
+                </label>
+                <label class="field advanced-field">
+                  <span class="field-label">Max API requests</span>
+                  <input
+                    id="max-requests"
+                    name="max-requests"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputmode="numeric"
+                    placeholder="100"
+                  />
+                  <span class="field-hint">Raise this to pull more from a large album. A big, mostly-sensitive gallery needs many requests and may hit DeviantArt's rate limit.</span>
+                </label>
+                <label class="check">
+                  <input id="force-refresh" name="force-refresh" type="checkbox" />
+                  <span>Re-download images — ignore the local cache</span>
+                </label>
+              </details>
               <button type="submit" id="start-btn">Start practice</button>
             </form>
 

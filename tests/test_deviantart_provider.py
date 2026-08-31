@@ -5,10 +5,12 @@ import respx
 from timed_sketching_helper.models import SourceRef
 from timed_sketching_helper.sources.deviantart import (
     API_BASE,
+    HARD_MAX_REQUESTS,
     TOKEN_URL,
     DeviantArtApiError,
     DeviantArtAuthError,
     DeviantArtProvider,
+    DeviantArtRateLimitError,
 )
 
 
@@ -190,6 +192,151 @@ async def test_list_images_stops_at_max_images_without_fetching_more_pages():
 async def test_max_images_is_hard_capped_at_1000():
     assert DeviantArtProvider("id", "secret", max_images=99999)._max_images == 1000
     assert DeviantArtProvider("id", "secret")._max_images == 1000
+
+
+@respx.mock
+async def test_list_images_max_images_argument_lowers_the_fetch():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = _page_by_offset()
+
+    images = await DeviantArtProvider("id", "secret").list_images(
+        gallery_ref(), max_images=10
+    )
+
+    assert len(images) == 10
+    assert route.call_count == 1  # first page of 24 already covers the limit
+
+
+@respx.mock
+async def test_list_images_max_images_argument_cannot_exceed_the_ceiling():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = _page_by_offset()
+
+    images = await DeviantArtProvider("id", "secret", max_images=30).list_images(
+        gallery_ref(), max_images=500
+    )
+
+    assert len(images) == 30
+
+
+def _blurred_page_by_offset():
+    """Every page is full of sensitive deviations the viewer can't see, so
+    _collect drops them all — the image count never moves and only the request
+    cap can stop the pagination."""
+
+    def handler(request):
+        off = int(request.url.params.get("offset", 0))
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    _blurred_deviation(f"b{off + i}") for i in range(24)
+                ],
+                "has_more": True,
+                "next_offset": off + 24,
+            },
+        )
+
+    return handler
+
+
+async def test_max_requests_is_hard_capped_at_1000():
+    assert (
+        DeviantArtProvider("id", "secret", max_requests=99999)._max_requests
+        == 1000
+    )
+    assert DeviantArtProvider("id", "secret")._max_requests == 1000
+
+
+@respx.mock
+async def test_list_images_stops_at_max_requests():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = _blurred_page_by_offset()
+
+    images = await DeviantArtProvider(
+        "id", "secret", max_requests=5
+    ).list_images(gallery_ref())
+
+    assert images == []
+    assert route.call_count == 5  # pagination would never end on its own
+
+
+@respx.mock
+async def test_max_requests_argument_raises_the_configured_default():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = _blurred_page_by_offset()
+
+    # The provider is configured with the default cap of 3; the per-fetch
+    # argument lifts it (the opposite of how max_images clamps down).
+    await DeviantArtProvider("id", "secret", max_requests=3).list_images(
+        gallery_ref(), max_requests=9
+    )
+
+    assert route.call_count == 9
+
+
+@respx.mock
+async def test_max_requests_argument_cannot_exceed_the_hard_ceiling(monkeypatch):
+    monkeypatch.setattr(
+        "timed_sketching_helper.sources.deviantart.HARD_MAX_REQUESTS", 4
+    )
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = _blurred_page_by_offset()
+
+    await DeviantArtProvider("id", "secret").list_images(
+        gallery_ref(), max_requests=999
+    )
+
+    assert route.call_count == 4
+
+
+@respx.mock
+async def test_user_api_threshold_raises_rate_limit_error():
+    _token_route(respx.mock)
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(
+            429,
+            json={
+                "error": "user_api_threshold",
+                "error_description": "User request limit reached.",
+            },
+        )
+    )
+
+    with pytest.raises(DeviantArtRateLimitError):
+        await DeviantArtProvider("id", "secret").list_images(gallery_ref())
+
+
+@respx.mock
+async def test_rate_limit_mid_fetch_returns_the_images_collected_so_far():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json={
+                "results": [_deviation("a"), _deviation("b")],
+                "has_more": True,
+                "next_offset": 2,
+            },
+        ),
+        httpx.Response(
+            429,
+            json={
+                "error": "user_api_threshold",
+                "error_description": "User request limit reached.",
+            },
+        ),
+    ]
+
+    images = await DeviantArtProvider("id", "secret").list_images(gallery_ref())
+
+    assert [i.source_id for i in images] == ["a", "b"]
 
 
 def search_ref(query="posing"):

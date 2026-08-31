@@ -20,6 +20,14 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
 # says. A session only ever shows a handful; a few hundred is plenty of variety.
 HARD_MAX_IMAGES = 1000
 
+# Stop a single list fetch after this many upstream API requests. Unlike
+# MAX_IMAGES this is a *default*, not a ceiling — a big album that is mostly
+# sensitive images (all filtered out) can page forever without the image count
+# moving, so cap the work up front. The "Max API requests" advanced option
+# raises it, up to HARD_MAX_REQUESTS.
+DEFAULT_MAX_REQUESTS = 100
+HARD_MAX_REQUESTS = 1000
+
 
 def _as_max_images(value: str | None) -> int:
     try:
@@ -27,6 +35,14 @@ def _as_max_images(value: str | None) -> int:
     except ValueError:
         n = HARD_MAX_IMAGES
     return max(1, min(n, HARD_MAX_IMAGES))
+
+
+def _as_max_requests(value: str | None) -> int:
+    try:
+        n = int(value) if value is not None else DEFAULT_MAX_REQUESTS
+    except ValueError:
+        n = DEFAULT_MAX_REQUESTS
+    return max(1, min(n, HARD_MAX_REQUESTS))
 
 
 def _as_positive_int(value: str | None, default: int) -> int:
@@ -49,6 +65,7 @@ class Config:
     data_dir: Path
     list_ttl_hours: int
     max_images: int = HARD_MAX_IMAGES
+    max_requests: int = DEFAULT_MAX_REQUESTS
 
     @property
     def db_path(self) -> Path:
@@ -77,6 +94,7 @@ def load_config() -> Config:
         data_dir=data_dir,
         list_ttl_hours=_as_positive_int(os.environ.get("LIST_TTL_HOURS"), 24),
         max_images=_as_max_images(os.environ.get("MAX_IMAGES")),
+        max_requests=_as_max_requests(os.environ.get("MAX_REQUESTS")),
     )
 
 

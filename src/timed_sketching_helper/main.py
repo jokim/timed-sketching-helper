@@ -33,6 +33,7 @@ from timed_sketching_helper.sources.deviantart import (
     DeviantArtApiError,
     DeviantArtAuthError,
     DeviantArtProvider,
+    DeviantArtRateLimitError,
 )
 from timed_sketching_helper.sources.deviantart_oauth import (
     DeviantArtOAuth,
@@ -80,6 +81,12 @@ def _is_cross_site_write(request: Request, origin_hosts: set[str] | None) -> boo
 class ListRequest(BaseModel):
     url: str
     force_refresh: bool = False
+    # Optional lower bound on how many images to fetch, to skip a long load.
+    # The configured MAX_IMAGES ceiling still applies.
+    max_images: int | None = Field(default=None, ge=1)
+    # Optional override for the per-fetch API request cap (default MAX_REQUESTS,
+    # 100). Raise it for a large album; the HARD_MAX_REQUESTS ceiling applies.
+    max_requests: int | None = Field(default=None, ge=1)
 
 
 class SessionRequest(BaseModel):
@@ -99,6 +106,7 @@ def _default_resolver(cfg: Config, user_token=None):
         cfg.deviantart_client_secret,
         user_token=user_token,
         max_images=cfg.max_images,
+        max_requests=cfg.max_requests,
     )
 
     def resolver(url: str) -> SourceProvider:
@@ -235,6 +243,10 @@ def create_app(
     async def _auth_error(_request, exc):  # noqa: ANN001
         return _json_error(502, str(exc))
 
+    @app.exception_handler(DeviantArtRateLimitError)
+    async def _rate_limited(_request, exc):  # noqa: ANN001
+        return _json_error(429, str(exc))
+
     @app.exception_handler(DeviantArtApiError)
     async def _api_error(_request, exc):  # noqa: ANN001
         return _json_error(502, str(exc))
@@ -251,6 +263,8 @@ def create_app(
             force_refresh=body.force_refresh,
             clear_image_cache=body.force_refresh,
             ttl_hours=cfg.list_ttl_hours,
+            max_images=body.max_images,
+            max_requests=body.max_requests,
             resolver=resolver,
             on_progress=on_progress,
         )

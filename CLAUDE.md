@@ -52,8 +52,10 @@ Key design points, each spanning several files:
   `#view-done`) toggled by `show()`, which also stamps `document.body.dataset.view`
   — `styles.css` keys the full-viewport, non-scrolling session layout off
   `body[data-view="session"]`. `app.js` finds form fields and controls by fixed
-  ids / `data-*` attributes (`#url`, `#count`, `#duration`, `#force-refresh`,
-  toolbar buttons via `[data-action]`, dock buttons via `[data-dock]`), so keep
+  ids / `data-*` attributes (`#url`, `#count`, `#duration`; `#force-refresh` and
+  `#max-images` inside the collapsed `<details class="advanced">` "Advanced
+  options" panel; toolbar buttons via `[data-action]`, dock buttons via
+  `[data-dock]`), so keep
   those when editing `index.html`. **End** returns to the start screen;
   `#view-done` is only reached when the timer runs out on the last image.
 
@@ -110,7 +112,36 @@ Key design points, each spanning several files:
   reaches `max_images` (from `MAX_IMAGES`, default and hard ceiling
   `config.HARD_MAX_IMAGES` = 1000) — a session shows a handful, so fetching
   thousands is wasted work. `main._default_resolver` passes `cfg.max_images`;
-  the constructor re-clamps to the ceiling.
+  the constructor re-clamps to the ceiling. `list_images(..., max_images=N)`
+  (threaded from the `max_images` field on `POST /api/lists` / `get_list`, set
+  by the "Limit images fetched" advanced option) lowers the cap for one fetch
+  only — `min(N, self._max_images)`, so the config ceiling always wins. A cache
+  hit otherwise ignores `max_images` (no long load to skip), *except* when an
+  explicit `N` exceeds the cached item count — `get_list` reads that as the user
+  raising a previously-lower limit and re-fetches to pull the extra images in.
+
+- **Request cap.** `_Progress` also counts upstream API requests and exposes
+  `.exhausted`; `_iter_pages` / `_folders` / `_iter_folders` stop paginating
+  once it trips. Unlike `max_images`, this is a *default* (`MAX_REQUESTS`,
+  `config.DEFAULT_MAX_REQUESTS` = 100) with a separate hard ceiling
+  (`HARD_MAX_REQUESTS` = 1000): the `max_requests` field on `POST /api/lists` /
+  `get_list` (the "Max API requests" advanced option) *raises* it for one
+  fetch — `min(N, HARD_MAX_REQUESTS)` — because a large mostly-sensitive album
+  can page for hundreds of requests without the image count moving (every
+  deviation is blur-filtered by `_collect`), running into DeviantArt's
+  `user_api_threshold` limit. Stopping on the budget is silent, like the image
+  cap; the group `/gallery/folders` fallback is skipped when `.exhausted`
+  (an empty result there means "gave up early", not "empty gallery").
+
+- **Rate-limit handling.** `_get` raises `DeviantArtRateLimitError` (a
+  `DeviantArtApiError` subclass) when the error detail contains
+  `user_api_threshold`, with a message keyed to the active token
+  (`_rate_limit_message`: per-account vs per-app, the latter suggesting a
+  DeviantArt login for a separate quota). `_collect` catches it: if images were
+  already collected it logs and returns the partial list (same outcome as
+  hitting a cap); with nothing collected it re-raises. `main` maps the
+  exception to HTTP **429** (`_rate_limited` handler); the NDJSON stream path
+  surfaces the message as an `{"type":"error"}` line.
 
 - **Image bytes are cached lazily, not up front.** `get_list` no longer
   downloads anything. `GET /api/images/{id}` downloads on demand via

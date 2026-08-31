@@ -9,6 +9,10 @@ reference pool.
 Everything runs on your machine. The only network calls are to the DeviantArt
 API; saved reference URLs never leave the browser (see [Privacy](#privacy)).
 
+| Start screen | Timed session |
+| --- | --- |
+| ![Start screen](docs/screenshot-start.png) | ![Timed session](docs/screenshot-session.png) |
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/).

@@ -145,6 +145,22 @@ function forgetUrl(url) {
   writeStore(RECENT_KEY, readStore(RECENT_KEY).filter((e) => e.url !== url));
 }
 
+// The backend titles repeat the kind ("user · gallery · folder", 'Search: "x"')
+// which is redundant with the "kind · url" sub-line under each saved row. Strip
+// that here, at render time, so already-saved entries clean up too.
+function displayTitle(entry) {
+  const title = (entry.title || "").trim();
+  if (!title) return entry.url;
+  if (entry.kind === "search") {
+    return title.replace(/^Search:\s*/i, "").replace(/^"(.*)"$/, "$1") || title;
+  }
+  if (entry.kind === "gallery" || entry.kind === "favourites") {
+    const parts = title.split(" · ").filter((p) => p.toLowerCase() !== entry.kind);
+    return parts.join(" · ") || title;
+  }
+  return title;
+}
+
 function savedThumb(entry) {
   const box = document.createElement("span");
   box.className = "saved-thumb";
@@ -171,7 +187,7 @@ function savedRow(entry) {
   pick.dataset.act = "pick";
   const name = document.createElement("span");
   name.className = "saved-name";
-  name.textContent = entry.title || entry.url;
+  name.textContent = displayTitle(entry);
   const sub = document.createElement("span");
   sub.className = "saved-url";
   sub.textContent = entry.kind ? `${entry.kind} · ${entry.url}` : entry.url;
@@ -219,7 +235,7 @@ function renderSaved() {
   for (const r of [...favorites, ...recent]) {
     const opt = document.createElement("option");
     opt.value = r.url;
-    opt.label = r.kind ? `${r.title} (${r.kind})` : r.title;
+    opt.label = r.kind ? `${displayTitle(r)} (${r.kind})` : displayTitle(r);
     list.appendChild(opt);
   }
 }
@@ -252,6 +268,19 @@ const state = {
   count: 20,
 };
 
+// DeviantArt chevron-D mark (simpleicons.org path). Uses currentColor so it
+// picks up the button's hover accent for free.
+const DA_LOGO_SVG =
+  '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+  '<path fill="currentColor" d="M19.207 4.794l.23-.43V0h-4.128l-.436.44-2.02 3.86-.65.44H4.564v5.15h4.847l.436.44-4.847 9.191-.23.43V24h4.128l.436-.44 2.02-3.86.65-.44h7.639v-5.15h-4.847l-.436-.44 4.847-9.191z"/>' +
+  "</svg>";
+
+function setAuthBtnLabel(btn, label) {
+  btn.replaceChildren();
+  btn.insertAdjacentHTML("afterbegin", DA_LOGO_SVG);
+  btn.append(Object.assign(document.createElement("span"), { textContent: label }));
+}
+
 async function loadAuthStatus() {
   const wrap = $("#da-auth");
   const text = $("#da-auth-text");
@@ -262,15 +291,15 @@ async function loadAuthStatus() {
       text.textContent = status.username
         ? `DeviantArt: connected as ${status.username}.`
         : "DeviantArt: connected.";
-      btn.textContent = "Disconnect";
+      setAuthBtnLabel(btn, "Disconnect");
       btn.onclick = async () => {
         await fetch("/auth/deviantart/logout", { method: "POST" });
         loadAuthStatus();
       };
     } else {
       text.textContent =
-        "Sensitive / mature images are skipped until you connect DeviantArt.";
-      btn.textContent = "Connect DeviantArt";
+        "Connect to your DeviantArt account more functionality.";
+      setAuthBtnLabel(btn, "Connect DeviantArt");
       btn.onclick = () => {
         window.location.href = "/auth/deviantart/login";
       };
@@ -367,14 +396,17 @@ function setFetchProgress(state) {
     : `Contacting the source · ${req}…`;
 }
 
-async function fetchListStreaming(url, forceRefresh, onProgress) {
+async function fetchListStreaming(url, forceRefresh, maxImages, maxRequests, onProgress) {
+  const body = { url, force_refresh: forceRefresh };
+  if (maxImages) body.max_images = maxImages;
+  if (maxRequests) body.max_requests = maxRequests;
   const res = await fetch("/api/lists", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/x-ndjson",
     },
-    body: JSON.stringify({ url, force_refresh: forceRefresh }),
+    body: JSON.stringify(body),
   });
   if (!res.ok || !res.body) {
     const body = await res.json().catch(() => ({}));
@@ -410,6 +442,10 @@ $("#start-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const url = $("#url").value.trim();
   const forceRefresh = $("#force-refresh").checked;
+  const maxImagesRaw = $("#max-images").value.trim();
+  const maxImages = maxImagesRaw ? Math.max(1, Math.floor(Number(maxImagesRaw))) : null;
+  const maxRequestsRaw = $("#max-requests").value.trim();
+  const maxRequests = maxRequestsRaw ? Math.max(1, Math.floor(Number(maxRequestsRaw))) : null;
   state.count = Number($("#count").value);
   state.duration = Number($("#duration").value);
   const btn = $("#start-btn");
@@ -417,7 +453,13 @@ $("#start-form").addEventListener("submit", async (event) => {
   setStartStatus("");
   setFetchProgress({ requests: 0, images: 0 });
   try {
-    const list = await fetchListStreaming(url, forceRefresh, setFetchProgress);
+    const list = await fetchListStreaming(
+      url,
+      forceRefresh,
+      maxImages,
+      maxRequests,
+      setFetchProgress,
+    );
     setFetchProgress("done");
     state.listId = list.list_id;
     state.listUrl = url;

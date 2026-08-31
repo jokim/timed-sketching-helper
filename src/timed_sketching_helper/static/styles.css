@@ -188,6 +188,43 @@ input[type="range"]:focus-visible {
 .row { display: flex; gap: 14px; }
 .row .field { flex: 1; }
 
+.advanced {
+  margin: 4px 0 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.advanced summary {
+  padding: 9px 12px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.advanced summary::-webkit-details-marker { display: none; }
+.advanced summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--muted);
+  transition: transform 0.12s;
+}
+.advanced[open] summary::before { transform: rotate(90deg); }
+.advanced summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.advanced > .advanced-field { margin: 0; padding: 4px 12px 6px; }
+.advanced > .check { margin: 0; padding: 6px 12px 12px; }
+
+.field-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .check {
   display: flex;
   align-items: center;
@@ -246,6 +283,9 @@ kbd {
   border-radius: 10px;
 }
 .auth button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 5px 11px;
   font: 500 12px system-ui, sans-serif;
   color: var(--fg-dim);
@@ -254,6 +294,7 @@ kbd {
   border-radius: 7px;
   cursor: pointer;
 }
+.auth button svg { width: 13px; height: 13px; flex: none; }
 .auth button:hover { border-color: var(--accent); color: var(--accent); }
 
 .status {

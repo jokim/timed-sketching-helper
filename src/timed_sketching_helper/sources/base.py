@@ -32,7 +32,12 @@ class SourceProvider(Protocol):
     def parse(self, url: str) -> SourceRef: ...
 
     async def list_images(
-        self, ref: SourceRef, *, on_progress: ProgressCallback | None = None
+        self,
+        ref: SourceRef,
+        *,
+        on_progress: ProgressCallback | None = None,
+        max_images: int | None = None,
+        max_requests: int | None = None,
     ) -> list[ImageMeta]: ...
 
 

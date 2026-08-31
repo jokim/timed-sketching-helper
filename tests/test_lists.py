@@ -20,11 +20,18 @@ class FakeProvider:
     def parse(self, url):
         return SourceRef("deviantart", "gallery", "artist", None, url)
 
-    async def list_images(self, ref, *, on_progress=None):
+    async def list_images(
+        self, ref, *, on_progress=None, max_images=None, max_requests=None
+    ):
         self.calls += 1
+        self.last_max_images = max_images
+        self.last_max_requests = max_requests
+        images = list(self.images)
+        if max_images is not None:
+            images = images[:max_images]
         if on_progress:
-            on_progress(1, len(self.images))
-        return list(self.images)
+            on_progress(1, len(images))
+        return images
 
 
 def meta(source_id):
@@ -83,6 +90,53 @@ async def test_first_fetch_persists_and_returns_items(conn):
     assert [i.source_id for i in result.items] == ["a", "b"]
     assert provider.calls == 1
     assert result.id is not None
+
+
+async def test_max_images_limits_the_fetch(conn):
+    provider = FakeProvider([meta("a"), meta("b"), meta("c")])
+
+    result = await get_list(
+        conn, ACCOUNT, URL, resolver=resolver_for(provider), max_images=1
+    )
+
+    assert [i.source_id for i in result.items] == ["a"]
+    assert provider.last_max_images == 1
+
+
+async def test_max_requests_is_forwarded_to_the_provider(conn):
+    provider = FakeProvider([meta("a"), meta("b")])
+
+    await get_list(
+        conn, ACCOUNT, URL, resolver=resolver_for(provider), max_requests=42
+    )
+
+    assert provider.last_max_requests == 42
+
+
+async def test_raising_max_images_above_cache_refetches(conn):
+    provider = FakeProvider([meta("a"), meta("b"), meta("c"), meta("d"), meta("e")])
+    first = await get_list(
+        conn, ACCOUNT, URL, resolver=resolver_for(provider), max_images=2
+    )
+    assert [i.source_id for i in first.items] == ["a", "b"]
+
+    second = await get_list(
+        conn, ACCOUNT, URL, resolver=resolver_for(provider), max_images=5
+    )
+
+    assert [i.source_id for i in second.items] == ["a", "b", "c", "d", "e"]
+    assert provider.calls == 2
+
+
+async def test_max_images_within_cache_still_uses_cache(conn):
+    provider = FakeProvider([meta("a"), meta("b"), meta("c")])
+    await get_list(conn, ACCOUNT, URL, resolver=resolver_for(provider))
+
+    await get_list(
+        conn, ACCOUNT, URL, resolver=resolver_for(provider), max_images=2
+    )
+
+    assert provider.calls == 1
 
 
 async def test_second_fetch_within_ttl_uses_cache(conn):

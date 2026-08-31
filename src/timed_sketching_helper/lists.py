@@ -57,6 +57,8 @@ async def get_list(
     force_refresh: bool = False,
     clear_image_cache: bool = False,
     ttl_hours: int = 24,
+    max_images: int | None = None,
+    max_requests: int | None = None,
     resolver: Callable[[str], SourceProvider] = resolve,
     on_progress: ProgressCallback | None = None,
 ) -> ImageList:
@@ -70,10 +72,24 @@ async def get_list(
         and _is_fresh(meta["fetched_at"], ttl_hours)
     ):
         cached = db.load_list(conn, meta["id"])
-        if cached is not None and cached.items:
+        # An explicit max_images that's higher than the cached list means the
+        # user raised a previously-lower limit — re-fetch so the extra images
+        # get pulled in. (A cache hit otherwise ignores max_images: there's no
+        # long load to skip.)
+        wants_more = max_images is not None and (
+            cached is None or len(cached.items) < max_images
+        )
+        if cached is not None and cached.items and not wants_more:
             return cached
 
-    images = _dedupe(await provider.list_images(ref, on_progress=on_progress))
+    images = _dedupe(
+        await provider.list_images(
+            ref,
+            on_progress=on_progress,
+            max_images=max_images,
+            max_requests=max_requests,
+        )
+    )
     if not images:
         raise ValueError(f"No images found for {url!r}.")
 

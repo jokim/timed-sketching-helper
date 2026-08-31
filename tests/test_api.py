@@ -29,11 +29,18 @@ class FakeProvider:
     def parse(self, url):
         return SourceRef("deviantart", "gallery", "artist", None, url)
 
-    async def list_images(self, ref, *, on_progress=None):
-        for n, _ in enumerate(self.images, start=1):
+    async def list_images(
+        self, ref, *, on_progress=None, max_images=None, max_requests=None
+    ):
+        self.last_max_images = max_images
+        self.last_max_requests = max_requests
+        images = list(self.images)
+        if max_images is not None:
+            images = images[:max_images]
+        for n, _ in enumerate(images, start=1):
             if on_progress:
                 on_progress(n, n)
-        return list(self.images)
+        return images
 
 
 def meta(source_id):
@@ -222,6 +229,70 @@ def test_create_list_without_stream_accept_still_returns_json(client):
     assert body["thumb"] == "a"
 
 
+def test_create_list_honours_max_images_from_the_body(client):
+    body = client.post(
+        "/api/lists", json={"url": GALLERY_URL, "max_images": 1}
+    ).json()
+    assert body["count"] == 1
+
+
+def test_create_list_rejects_a_non_positive_max_images(client):
+    res = client.post("/api/lists", json={"url": GALLERY_URL, "max_images": 0})
+    assert res.status_code == 422
+
+
+def test_create_list_forwards_max_requests_from_the_body(conn, tmp_path):
+    provider = FakeProvider([meta("a"), meta("b")])
+
+    def resolver(url):
+        if provider.matches(url):
+            return provider
+        raise UnknownSourceError(url)
+
+    app = create_app(
+        conn=conn, cache=ImageCache(conn, tmp_path / "cache"), resolver=resolver
+    )
+    client = TestClient(app, base_url="http://localhost")
+
+    client.post("/api/lists", json={"url": GALLERY_URL, "max_requests": 250})
+
+    assert provider.last_max_requests == 250
+
+
+def _rate_limited_client(conn, tmp_path):
+    from timed_sketching_helper.sources.deviantart import DeviantArtRateLimitError
+
+    class RateLimitedProvider(FakeProvider):
+        async def list_images(self, ref, **kwargs):
+            raise DeviantArtRateLimitError("Wait a few minutes and try again.")
+
+    provider = RateLimitedProvider([])
+    app = create_app(
+        conn=conn,
+        cache=ImageCache(conn, tmp_path / "cache"),
+        resolver=lambda url: provider,
+    )
+    return TestClient(app, base_url="http://localhost")
+
+
+def test_rate_limit_from_the_provider_returns_429(conn, tmp_path):
+    client = _rate_limited_client(conn, tmp_path)
+
+    res = client.post("/api/lists", json={"url": GALLERY_URL})
+
+    assert res.status_code == 429
+    assert "few minutes" in res.json()["error"]
+
+
+def test_rate_limit_surfaces_as_an_error_line_on_the_stream(conn, tmp_path):
+    client = _rate_limited_client(conn, tmp_path)
+
+    messages = _stream_lines(client, GALLERY_URL)
+
+    assert messages[-1]["type"] == "error"
+    assert "few minutes" in messages[-1]["error"]
+
+
 @respx.mock
 def test_create_session_partitions_items(client):
     respx.mock.get(url__startswith="https://img.example/").mock(
@@ -332,7 +403,9 @@ class RotatingProvider:
     def parse(self, url):
         return SourceRef("deviantart", "gallery", "artist", None, url)
 
-    async def list_images(self, ref, *, on_progress=None):
+    async def list_images(
+        self, ref, *, on_progress=None, max_images=None, max_requests=None
+    ):
         self.calls += 1
         return [
             ImageMeta(

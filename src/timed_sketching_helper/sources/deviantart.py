@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -9,9 +10,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
-from timed_sketching_helper.config import HARD_MAX_IMAGES
+from timed_sketching_helper.config import HARD_MAX_IMAGES, HARD_MAX_REQUESTS
 from timed_sketching_helper.models import ImageMeta, SourceRef
 from timed_sketching_helper.sources.base import ProgressCallback
+
+logger = logging.getLogger(__name__)
 
 API_BASE = "https://www.deviantart.com/api/v1/oauth2"
 # The OAuth2 token endpoint lives outside the /api/v1 tree (see
@@ -84,12 +87,30 @@ class _Progress:
     ``request_done`` fires after every upstream API request (the signal that
     matters most — it means we are still making forward progress); ``flush``
     emits the final tally once collection is complete.
+
+    ``max_requests`` caps how many upstream requests one fetch may make; the
+    pagination loops stop once ``exhausted`` is true. A mostly-sensitive album
+    can otherwise page indefinitely without collecting a single viewable image
+    (they are all dropped by the blur filter), running straight into
+    DeviantArt's per-client request limit.
     """
 
-    def __init__(self, callback: ProgressCallback | None) -> None:
+    def __init__(
+        self,
+        callback: ProgressCallback | None,
+        max_requests: int | None = None,
+    ) -> None:
         self._callback = callback
         self._requests = 0
         self._images = 0
+        self._max_requests = max_requests
+
+    @property
+    def exhausted(self) -> bool:
+        return (
+            self._max_requests is not None
+            and self._requests >= self._max_requests
+        )
 
     def request_done(self) -> None:
         self._requests += 1
@@ -112,6 +133,12 @@ class DeviantArtAuthError(RuntimeError):
 
 class DeviantArtApiError(RuntimeError):
     """The DeviantArt API returned an error for a request."""
+
+
+class DeviantArtRateLimitError(DeviantArtApiError):
+    """DeviantArt throttled us (``user_api_threshold``). Distinct from a plain
+    API error so callers can return a partial list or surface a "wait and
+    retry" message instead of a hard failure."""
 
 
 def _error_detail(response: httpx.Response) -> str:
@@ -144,12 +171,17 @@ class DeviantArtProvider:
         *,
         user_token: UserTokenProvider | None = None,
         max_images: int = HARD_MAX_IMAGES,
+        max_requests: int = HARD_MAX_REQUESTS,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         # Stop fetching once a list reaches this many images — a session only
         # ever shows a handful. Clamped to HARD_MAX_IMAGES whatever is passed.
         self._max_images = max(1, min(max_images, HARD_MAX_IMAGES))
+        # Default cap on upstream API requests per fetch. The per-fetch
+        # `max_requests` argument to list_images() raises this (up to
+        # HARD_MAX_REQUESTS) — unlike max_images, which only ever clamps down.
+        self._max_requests = max(1, min(max_requests, HARD_MAX_REQUESTS))
         # When set, an awaitable returning a logged-in user's access token (or
         # None if nobody is logged in). Preferred over the client-credentials
         # grant because anonymous tokens get blurred mature content.
@@ -263,9 +295,24 @@ class DeviantArtProvider:
     # -- API access ---------------------------------------------------------
 
     async def list_images(
-        self, ref: SourceRef, *, on_progress: ProgressCallback | None = None
+        self,
+        ref: SourceRef,
+        *,
+        on_progress: ProgressCallback | None = None,
+        max_images: int | None = None,
+        max_requests: int | None = None,
     ) -> list[ImageMeta]:
-        progress = _Progress(on_progress)
+        # A caller may raise the request budget for one big album; the hard
+        # ceiling still wins.
+        request_cap = self._max_requests
+        if max_requests is not None:
+            request_cap = max(1, min(max_requests, HARD_MAX_REQUESTS))
+        progress = _Progress(on_progress, request_cap)
+        # A caller may ask for fewer images to skip a long load; the configured
+        # ceiling still wins.
+        cap = self._max_images
+        if max_images is not None:
+            cap = max(1, min(max_images, self._max_images))
         async with httpx.AsyncClient(
             timeout=30.0, headers={"User-Agent": USER_AGENT}
         ) as client:
@@ -275,6 +322,7 @@ class DeviantArtProvider:
                         client, "/browse/tags", {"tag": ref.tag}, progress
                     ),
                     progress,
+                    cap,
                 )
             elif ref.kind == "search":
                 images = await self._collect(
@@ -282,10 +330,11 @@ class DeviantArtProvider:
                         client, "/browse/home", {"q": ref.query}, progress
                     ),
                     progress,
+                    cap,
                 )
             elif ref.kind == "morelikethis":
                 images = await self._collect(
-                    self._iter_morelikethis(client, ref, progress), progress
+                    self._iter_morelikethis(client, ref, progress), progress, cap
                 )
             else:
                 endpoint = "gallery" if ref.kind == "gallery" else "collections"
@@ -297,12 +346,16 @@ class DeviantArtProvider:
                         client, endpoint, folder_ids, ref.username, progress
                     ),
                     progress,
+                    cap,
                 )
                 # A DeviantArt *group*'s /gallery/all is always empty — the
                 # group's deviations live only in its gallery folders. Fall
                 # back to aggregating them, the way favourites/all already
-                # aggregates collection folders.
-                if not images and folder_ids == ["all"]:
+                # aggregates collection folders. Skip this when we stopped on
+                # the request budget: an empty result there means "gave up
+                # early", not "genuinely empty", and the fallback would only
+                # burn more requests.
+                if not images and folder_ids == ["all"] and not progress.exhausted:
                     folder_ids = await self._all_folder_ids(
                         client, endpoint, ref.username, progress
                     )
@@ -311,6 +364,7 @@ class DeviantArtProvider:
                             client, endpoint, folder_ids, ref.username, progress
                         ),
                         progress,
+                        cap,
                     )
         progress.flush()
         return images
@@ -324,6 +378,8 @@ class DeviantArtProvider:
         progress: _Progress,
     ):
         for folder_id in folder_ids:
+            if progress.exhausted:
+                return
             async for deviation in self._iter_pages(
                 client, f"/{endpoint}/{folder_id}", {"username": username}, progress
             ):
@@ -379,23 +435,39 @@ class DeviantArtProvider:
             )
         return seed_uuid
 
-    async def _collect(self, deviations, progress: _Progress) -> list[ImageMeta]:
+    async def _collect(
+        self, deviations, progress: _Progress, cap: int | None = None
+    ) -> list[ImageMeta]:
+        if cap is None:
+            cap = self._max_images
         images: list[ImageMeta] = []
         seen: set[str] = set()
-        async for deviation in deviations:
-            meta = _deviation_to_meta(deviation)
-            if meta is None or meta.source_id in seen:
-                continue
-            # A blurred src means the viewer can't actually see this sensitive
-            # deviation — useless as a drawing reference, so keep it out of the
-            # list entirely.
-            if _is_blurred_src(meta.image_url):
-                continue
-            seen.add(meta.source_id)
-            images.append(meta)
-            progress.set_images(len(images))
-            if len(images) >= self._max_images:
-                return images
+        try:
+            async for deviation in deviations:
+                meta = _deviation_to_meta(deviation)
+                if meta is None or meta.source_id in seen:
+                    continue
+                # A blurred src means the viewer can't actually see this
+                # sensitive deviation — useless as a drawing reference, so keep
+                # it out of the list entirely.
+                if _is_blurred_src(meta.image_url):
+                    continue
+                seen.add(meta.source_id)
+                images.append(meta)
+                progress.set_images(len(images))
+                if len(images) >= cap:
+                    return images
+        except DeviantArtRateLimitError:
+            # Throttled mid-fetch. If we already have something usable, return
+            # the partial list rather than failing the whole session; only
+            # re-raise when there is nothing to show.
+            if not images:
+                raise
+            logger.warning(
+                "DeviantArt rate limit hit after %d image(s); "
+                "returning a partial list",
+                len(images),
+            )
         return images
 
     async def _target_folder_ids(
@@ -436,7 +508,7 @@ class DeviantArtProvider:
             progress.request_done()
             for deviation in payload.get("results", []):
                 yield deviation
-            if not payload.get("has_more"):
+            if not payload.get("has_more") or progress.exhausted:
                 return
             next_offset = payload.get("next_offset")
             if next_offset is None:
@@ -492,12 +564,25 @@ class DeviantArtProvider:
             )
             progress.request_done()
             folders.extend(payload.get("results", []))
-            if not payload.get("has_more"):
+            if not payload.get("has_more") or progress.exhausted:
                 return folders
             next_offset = payload.get("next_offset")
             if next_offset is None:
                 return folders
             offset = next_offset
+
+    def _rate_limit_message(self) -> str:
+        if self._token_is_user:
+            return (
+                "Your DeviantArt account has hit its API request limit. "
+                "Wait a few minutes and try again."
+            )
+        return (
+            "DeviantArt's API request limit for this app was reached. Wait a "
+            "few minutes and try again — or connect your DeviantArt account "
+            "for a separate quota, and lower the request limit in Advanced "
+            "options for large albums."
+        )
 
     async def _get(
         self, client: httpx.AsyncClient, path: str, params: dict
@@ -523,8 +608,11 @@ class DeviantArtProvider:
                 headers={"Authorization": f"Bearer {token}"},
             )
         if response.status_code >= 400:
+            detail = _error_detail(response)
+            if "user_api_threshold" in detail:
+                raise DeviantArtRateLimitError(self._rate_limit_message())
             raise DeviantArtApiError(
-                f"DeviantArt API request to {path} failed ({_error_detail(response)})."
+                f"DeviantArt API request to {path} failed ({detail})."
             )
         return response.json()
 
