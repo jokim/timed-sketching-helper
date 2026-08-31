@@ -3,16 +3,24 @@ name = "timed-sketching-helper"
 version = "0.1.0"
 description = "Local web app for timed drawing practice from DeviantArt galleries and favourites"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Joakim Hovlandsvåg", email = "joakim.hovlandsvag@gmail.com" }
 ]
 requires-python = ">=3.12"
+keywords = ["drawing", "sketching", "gesture-drawing", "reference", "deviantart", "fastapi"]
 dependencies = [
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.3",
     "uvicorn[standard]>=0.52.4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jokim/timed-sketching-helper"
+Repository = "https://github.com/jokim/timed-sketching-helper"
+Issues = "https://github.com/jokim/timed-sketching-helper/issues"
 
 [project.scripts]
 timed-sketching-helper = "timed_sketching_helper:main"

@@ -298,6 +298,20 @@ class DeviantArtProvider:
                     ),
                     progress,
                 )
+                # A DeviantArt *group*'s /gallery/all is always empty — the
+                # group's deviations live only in its gallery folders. Fall
+                # back to aggregating them, the way favourites/all already
+                # aggregates collection folders.
+                if not images and folder_ids == ["all"]:
+                    folder_ids = await self._all_folder_ids(
+                        client, endpoint, ref.username, progress
+                    )
+                    images = await self._collect(
+                        self._iter_folders(
+                            client, endpoint, folder_ids, ref.username, progress
+                        ),
+                        progress,
+                    )
         progress.flush()
         return images
 

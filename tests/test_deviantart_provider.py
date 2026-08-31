@@ -508,6 +508,9 @@ async def test_token_request_uses_documented_oauth_endpoint():
     respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
         return_value=httpx.Response(200, json={"results": [], "has_more": False})
     )
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/folders").mock(
+        return_value=httpx.Response(200, json={"results": [], "has_more": False})
+    )
 
     await DeviantArtProvider("id", "secret").list_images(gallery_ref())
 
@@ -575,6 +578,45 @@ async def test_favourites_all_aggregates_every_collection_folder():
 
 
 @respx.mock
+async def test_group_gallery_falls_back_to_folders_when_gallery_all_is_empty():
+    # A DeviantArt group's /gallery/all returns nothing; its deviations are
+    # only reachable through the group's gallery folders. The bare-gallery URL
+    # must fall back to aggregating those folders.
+    _token_route(respx.mock)
+    empty_all = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(200, json={"results": [], "has_more": False})
+    )
+    folders = respx.mock.get(url__startswith=f"{API_BASE}/gallery/folders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"folderid": "1", "name": "Featured"},
+                    {"folderid": "2", "name": "Sketches"},
+                ],
+                "has_more": False,
+            },
+        )
+    )
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/1").mock(
+        return_value=httpx.Response(
+            200, json={"results": [_deviation("a")], "has_more": False}
+        )
+    )
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/2").mock(
+        return_value=httpx.Response(
+            200, json={"results": [_deviation("b")], "has_more": False}
+        )
+    )
+
+    images = await DeviantArtProvider("id", "secret").list_images(gallery_ref())
+
+    assert {i.source_id for i in images} == {"a", "b"}
+    assert empty_all.called
+    assert folders.called
+
+
+@respx.mock
 async def test_get_prefers_user_token_over_client_credentials():
     async def user_token(*, force=False):
         return "user-tok"
@@ -604,6 +646,9 @@ async def test_get_falls_back_to_client_credentials_when_no_user_logged_in():
 
     _token_route(respx.mock)
     respx.mock.get(url__startswith=f"{API_BASE}/gallery/all").mock(
+        return_value=httpx.Response(200, json={"results": [], "has_more": False})
+    )
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/folders").mock(
         return_value=httpx.Response(200, json={"results": [], "has_more": False})
     )
 
@@ -739,6 +784,11 @@ async def test_list_images_keeps_blurred_deviations_out_even_when_logged_in():
             200,
             json={"results": [_blurred_deviation("hidden")], "has_more": False},
         )
+    )
+    # Everything filtered out looks the same as an empty gallery, so the group
+    # fallback probes folders too; nothing there either.
+    respx.mock.get(url__startswith=f"{API_BASE}/gallery/folders").mock(
+        return_value=httpx.Response(200, json={"results": [], "has_more": False})
     )
 
     images = await DeviantArtProvider(

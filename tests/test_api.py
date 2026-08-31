@@ -60,7 +60,7 @@ def client(conn, tmp_path):
         cache=ImageCache(conn, tmp_path / "cache"),
         resolver=resolver,
     )
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ def auth_client(conn, tmp_path):
     app = create_app(
         conn=conn, cache=ImageCache(conn, tmp_path / "cache"), cfg=cfg
     )
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")
 
 
 def test_auth_status_starts_disconnected(auth_client):
@@ -357,7 +357,7 @@ def test_image_endpoint_refreshes_expired_url_and_retries(conn, tmp_path):
     app = create_app(
         conn=conn, cache=ImageCache(conn, tmp_path / "cache"), resolver=resolver
     )
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
 
     respx.mock.get("https://img.example/a.png", params={"sig": "v1"}).mock(
         return_value=httpx.Response(403)
@@ -372,6 +372,89 @@ def test_image_endpoint_refreshes_expired_url_and_retries(conn, tmp_path):
     assert res.status_code == 200
     assert res.content == b"FRESH"
     assert provider.calls == 2
+
+
+def test_rejects_request_with_unknown_host_header(client):
+    res = client.get("/api/prefs", headers={"host": "attacker.example"})
+    assert res.status_code == 400
+
+
+def test_accepts_loopback_host_headers(client):
+    for host in ("localhost", "127.0.0.1", "127.0.0.1:8765"):
+        assert client.get("/api/prefs", headers={"host": host}).status_code == 200
+
+
+def test_trusted_hosts_wildcard_disables_the_check(conn, tmp_path):
+    app = create_app(
+        conn=conn,
+        cache=ImageCache(conn, tmp_path / "cache"),
+        resolver=lambda url: None,
+        trusted_hosts=["*"],
+    )
+    open_client = TestClient(app, base_url="http://anything.example")
+    assert open_client.get("/api/prefs").status_code == 200
+
+
+def test_logout_blocked_from_cross_site_request(auth_client, conn):
+    db_module.save_oauth(
+        conn,
+        1,
+        access_token="a",
+        refresh_token="r",
+        expires_at="2999-01-01T00:00:00+00:00",
+        scope="",
+        username="ninjatron",
+    )
+
+    res = auth_client.post(
+        "/auth/deviantart/logout", headers={"sec-fetch-site": "cross-site"}
+    )
+
+    assert res.status_code == 403
+    assert auth_client.get("/auth/deviantart/status").json()["connected"] is True
+
+
+def test_logout_blocked_when_origin_is_foreign(auth_client, conn):
+    db_module.save_oauth(
+        conn,
+        1,
+        access_token="a",
+        refresh_token="r",
+        expires_at="2999-01-01T00:00:00+00:00",
+        scope="",
+        username="ninjatron",
+    )
+
+    res = auth_client.post(
+        "/auth/deviantart/logout", headers={"origin": "http://evil.example"}
+    )
+
+    assert res.status_code == 403
+
+
+def test_logout_allowed_from_same_origin(auth_client, conn):
+    db_module.save_oauth(
+        conn,
+        1,
+        access_token="a",
+        refresh_token="r",
+        expires_at="2999-01-01T00:00:00+00:00",
+        scope="",
+        username="ninjatron",
+    )
+
+    res = auth_client.post(
+        "/auth/deviantart/logout",
+        headers={"sec-fetch-site": "same-origin", "origin": "http://localhost"},
+    )
+
+    assert res.status_code == 204
+    assert auth_client.get("/auth/deviantart/status").json()["connected"] is False
+
+
+def test_cross_site_header_does_not_block_safe_get(client):
+    res = client.get("/api/prefs", headers={"sec-fetch-site": "cross-site"})
+    assert res.status_code == 200
 
 
 def test_prefs_round_trip(client):

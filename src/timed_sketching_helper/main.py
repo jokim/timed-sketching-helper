@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import secrets
 import sqlite3
 from pathlib import Path
+from urllib.parse import urlparse
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import (
     FileResponse,
     RedirectResponse,
@@ -42,6 +45,36 @@ OAUTH_STATE_COOKIE = "da_oauth_state"
 OAUTH_VERIFIER_COOKIE = "da_oauth_verifier"
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Host headers accepted by default (the app only ever binds to a loopback
+# address unless --host says otherwise). "*" disables the check entirely.
+DEFAULT_TRUSTED_HOSTS = ["localhost", "127.0.0.1"]
+
+# Methods that never change state, so they need no cross-site-origin check.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _is_cross_site_write(request: Request, origin_hosts: set[str] | None) -> bool:
+    """Whether an unsafe-method request looks like it came from another site.
+
+    The JSON endpoints are already CSRF-safe (a cross-origin ``fetch`` with a
+    JSON body is preflighted and, with no CORS headers here, blocked). The
+    plain ones — ``POST /auth/deviantart/logout`` especially — are "simple
+    requests" a malicious page can fire without a preflight. Trust the
+    browser's ``Sec-Fetch-Site`` label where present; otherwise fall back to
+    the ``Origin`` header's host.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site not in {"same-origin", "none"}
+    origin = request.headers.get("origin")
+    if origin is None:
+        # Non-browser client, or a same-origin request that sent no Origin.
+        return False
+    if origin_hosts is None:
+        # Public bind: the operator opted out of host pinning (see main()).
+        return False
+    return (urlparse(origin).hostname or "").lower() not in origin_hosts
 
 
 class ListRequest(BaseModel):
@@ -91,6 +124,7 @@ def create_app(
     cache: ImageCache | None = None,
     resolver=None,
     cfg: Config | None = None,
+    trusted_hosts: list[str] | None = None,
 ) -> FastAPI:
     cfg = cfg or get_config()
     conn = conn or db.connect(cfg.db_path)
@@ -168,6 +202,29 @@ def create_app(
                 logger.warning("Pre-cache: could not fetch %s", item.source_id)
 
     app = FastAPI(title="Timed Sketching Helper")
+
+    # DNS-rebinding guard. The app is unauthenticated and binds to loopback, so
+    # the only thing standing between it and a web page you happen to visit is
+    # the same-origin policy — and that falls away if an attacker's domain is
+    # rebound to 127.0.0.1. Rejecting requests whose Host header we don't
+    # recognise closes that hole: the browser still sends the attacker's
+    # hostname in Host even after the DNS swap. See main() for how the list is
+    # chosen from --host.
+    allowed_hosts = trusted_hosts or DEFAULT_TRUSTED_HOSTS
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+    # CSRF guard for the non-JSON write endpoints (see _is_cross_site_write).
+    origin_hosts = (
+        None if "*" in allowed_hosts else {h.lower() for h in allowed_hosts}
+    )
+
+    @app.middleware("http")
+    async def _reject_cross_site_writes(request: Request, call_next):  # noqa: ANN001
+        if request.method not in _SAFE_METHODS and _is_cross_site_write(
+            request, origin_hosts
+        ):
+            return _json_error(403, "Cross-site request blocked.")
+        return await call_next(request)
 
     @app.exception_handler(UnknownSourceError)
     @app.exception_handler(ValueError)
@@ -392,6 +449,15 @@ def _json_error(status: int, detail: str):
     return JSONResponse(status_code=status, content={"error": detail})
 
 
+def _is_loopback(host: str) -> bool:
+    if host in {"localhost", ""}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def main(
     host: str = "127.0.0.1", port: int = 8765, log_level: str = "info"
 ) -> None:
@@ -412,7 +478,24 @@ def main(
             "Warning: DeviantArt credentials are not set. Copy .env.example to "
             ".env and fill them in.\n"
         )
-    uvicorn.run(create_app(cfg=cfg), host=host, port=port, log_level=log_level)
+
+    if _is_loopback(host):
+        trusted_hosts = DEFAULT_TRUSTED_HOSTS
+    else:
+        # A public bind can be reached under any number of hostnames/IPs, so
+        # there is no sensible allow-list to enforce — disable the Host check
+        # and make the exposure loud instead.
+        trusted_hosts = ["*"]
+        print(
+            f"Warning: binding to {host!r}, a non-loopback address. This app "
+            "has NO authentication — anyone who can reach this port can use "
+            "your connected DeviantArt account and read/change your data. The "
+            "Host-header (DNS-rebinding) check is disabled in this mode. Only "
+            "do this on a network you fully trust.\n"
+        )
+
+    app = create_app(cfg=cfg, trusted_hosts=trusted_hosts)
+    uvicorn.run(app, host=host, port=port, log_level=log_level)
 
 
 if __name__ == "__main__":

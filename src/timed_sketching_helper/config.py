@@ -29,6 +29,17 @@ def _as_max_images(value: str | None) -> int:
     return max(1, min(n, HARD_MAX_IMAGES))
 
 
+def _as_positive_int(value: str | None, default: int) -> int:
+    """Parse a positive integer, falling back to ``default`` for anything
+    missing, non-numeric, or below 1 (a zero/negative TTL would make every
+    cached list instantly stale)."""
+    try:
+        n = int(value) if value is not None else default
+    except ValueError:
+        return default
+    return max(1, n)
+
+
 @dataclass(frozen=True)
 class Config:
     deviantart_client_id: str
@@ -64,7 +75,7 @@ def load_config() -> Config:
         ),
         mature_content=_as_bool(os.environ.get("DA_MATURE_CONTENT"), default=True),
         data_dir=data_dir,
-        list_ttl_hours=int(os.environ.get("LIST_TTL_HOURS", "24")),
+        list_ttl_hours=_as_positive_int(os.environ.get("LIST_TTL_HOURS"), 24),
         max_images=_as_max_images(os.environ.get("MAX_IMAGES")),
     )
 

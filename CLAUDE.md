@@ -23,11 +23,14 @@ login to work.
 
 The CLI seam: `__init__.py` owns the `argparse` front end (`main()`, the console-script
 entry point); `main.main(host, port, log_level)` — also exported as `serve` — is the
-actual server launcher and configures `logging` before handing off to `uvicorn.run`.
+actual server launcher: it configures `logging`, derives the `TrustedHostMiddleware`
+allow-list from `--host` (loopback → locked to localhost, otherwise off + a warning),
+and hands off to `uvicorn.run`.
 
 There is **no frontend build step or JS tooling** — `static/` is three hand-written
-files (`index.html`, `styles.css`, `app.js`, vanilla ES modules-free) served as-is
-and bundled into the wheel by `uv build`. Edit them and reload the browser.
+files (`index.html`, `styles.css`, `app.js`; plain browser JS, no ES modules)
+served as-is and bundled into the wheel by `uv build`. Edit them and reload the
+browser.
 
 ## Architecture
 
@@ -85,7 +88,8 @@ Key design points, each spanning several files:
   the registry instance is credential-less.
 
 - **List caching in `lists.get_list`.** Fetch-or-load against `image_lists`
-  with a TTL (`LIST_TTL_HOURS`, default 24h); a cache hit skips the provider
+  with a TTL (`LIST_TTL_HOURS`, default 24h; `config._as_positive_int` floors it
+  at 1 and falls back to 24 for non-numeric values); a cache hit skips the provider
   entirely. `force_refresh=True` re-fetches (rotating the short-lived signed
   `content.src` URLs); `clear_image_cache=True` *also* drops the list's
   `image_cache` rows (the "Re-download images" / un-blur path).
@@ -145,9 +149,36 @@ Key design points, each spanning several files:
   refresh token is deleted so the UI re-prompts for login. `_get_token(force=True)`
   (after a 401) bypasses both caches.
 
-- **`create_app(*, conn=None, cache=None, resolver=None, cfg=None)`** is a factory
-  with injectable dependencies — tests pass an in-memory SQLite connection, a
-  temp-dir `ImageCache`, and a fake resolver.
+- **`create_app(*, conn=None, cache=None, resolver=None, cfg=None, trusted_hosts=None)`**
+  is a factory with injectable dependencies — tests pass an in-memory SQLite
+  connection, a temp-dir `ImageCache`, and a fake resolver.
+
+- **DNS-rebinding guard (`TrustedHostMiddleware`).** The app is unauthenticated
+  and loopback-bound, so its only protection from a web page you happen to visit
+  is the same-origin policy — which DNS rebinding defeats by re-pointing the
+  attacker's hostname at `127.0.0.1`. `create_app` always installs
+  `TrustedHostMiddleware`; requests whose `Host` header isn't in the allow-list
+  get a flat `400`. `trusted_hosts` defaults to
+  `main.DEFAULT_TRUSTED_HOSTS = ["localhost", "127.0.0.1"]` (also what the
+  `uvicorn --factory` path and the `TestClient(base_url="http://localhost")`
+  fixtures rely on). `main.main()` picks the list from `--host`: a loopback bind
+  keeps the default; a non-loopback bind (`_is_loopback` is false) switches to
+  `["*"]` — the check is off, because a public bind has no predictable
+  hostname — and prints a warning that the app has no auth and is now exposed.
+
+- **Cross-site write guard.** A second `@app.middleware("http")`
+  (`_is_cross_site_write`) rejects unsafe-method requests (`403`) that a
+  browser labels `Sec-Fetch-Site: cross-site`/`same-site`, or — when that
+  header is absent — whose `Origin` host isn't in the trusted-host set. The
+  JSON endpoints are already CSRF-safe via the preflight-then-blocked path;
+  this is what protects the bodyless "simple request" ones, chiefly
+  `POST /auth/deviantart/logout`. Non-browser clients (no `Sec-Fetch-Site`, no
+  `Origin`) and a `["*"]` host set (public bind) skip the `Origin` fallback.
+
+- **The "source ↗" link is scheme-checked.** `app.js` `externalHref()` only
+  lets an `http(s)` `page_url` reach `#page-link.href` (a `javascript:` URL
+  from the API would otherwise run in the app origin on click); anything else
+  hides the link.
 
 ## DeviantArt API gotchas
 
@@ -158,6 +189,13 @@ Key design points, each spanning several files:
   URL's query string.
 - There is no `/collections/all`. For `.../favourites/all`, the provider lists every
   collection folder via `/collections/folders` and aggregates them.
+- A DeviantArt **group**'s `/gallery/all` always returns an empty result set — a
+  group's deviations are only reachable through its gallery folders. `list_images`
+  handles this by falling back to aggregating `/gallery/folders` (like
+  `favourites/all` does for collections) whenever a whole-gallery fetch
+  (`folder_ids == ["all"]`) comes back with zero images. There is no reliable
+  anonymous "is this a group?" signal — `/user/profile/<group>` 404s — so the
+  empty-result fallback is the detection.
 - API `folderid`s are UUIDs. The numeric id in a `deviantart.com/<user>/{gallery,
   favourites}/<id>/<name-slug>` URL is a *legacy* id the API does not accept —
   `/collections/<numeric>` 400s ("Request field validation failed"), `/gallery/

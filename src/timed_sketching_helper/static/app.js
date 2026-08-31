@@ -13,6 +13,18 @@ function show(name) {
   document.body.dataset.view = name;
 }
 
+// A URL from the API is only safe to drop into an href if it's http(s) — a
+// `javascript:` (or `data:`) page_url would otherwise run in our origin when
+// the "view on DeviantArt" link is clicked. Returns null for anything else.
+function externalHref(url) {
+  try {
+    const u = new URL(url, window.location.href);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Toolbar dock position ----------------------------------------------
 
 const DOCK_KEY = "tsh:dock";
@@ -614,8 +626,9 @@ function renderCurrent() {
 
   $("#progress").textContent = `${session.index + 1} / ${session.items.length}`;
   const link = $("#page-link");
-  link.href = item.page_url || "#";
-  link.style.visibility = item.page_url ? "visible" : "hidden";
+  const pageHref = externalHref(item.page_url);
+  link.href = pageHref || "#";
+  link.style.visibility = pageHref ? "visible" : "hidden";
 
   resetZoom();
 
@@ -742,9 +755,11 @@ function renderFavButton() {
   if (!state.listUrl) return;
   const favd = isFavorite(state.listUrl);
   btn.setAttribute("aria-pressed", String(favd));
-  btn.querySelector(".fav-lbl").textContent = favd
-    ? "Saved to favorites"
-    : "Save this reference to favorites";
+  btn.setAttribute(
+    "aria-label",
+    favd ? "Remove this reference from favorites" : "Save this reference to favorites",
+  );
+  btn.title = favd ? "Saved to favorites" : "Save to favorites";
 }
 
 function finishSession() {

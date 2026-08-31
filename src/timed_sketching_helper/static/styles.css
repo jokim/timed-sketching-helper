@@ -60,6 +60,8 @@ body[data-view="session"] #app {
   place-items: center;
 }
 
+#view-done .card { position: relative; }
+
 .start-layout {
   display: flex;
   flex-wrap: nowrap;
@@ -410,20 +412,33 @@ kbd {
 .saved-del:hover { border-color: var(--accent); color: var(--accent); }
 .saved-star[aria-pressed="true"] { color: var(--accent-hi); }
 
+/* Low-key icon-only toggle, floated into the card's top-right corner —
+   favoriting is also available on the start screen, so it stays in the
+   background here. */
 .fav-toggle {
-  width: 100%;
-  margin-top: 10px;
-  padding: 10px 14px;
-  font: 500 13px system-ui, sans-serif;
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
   color: var(--fg-dim);
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 9px;
   cursor: pointer;
-  transition: border-color 0.12s, color 0.12s;
+  opacity: 0.6;
+  transition: border-color 0.12s, color 0.12s, opacity 0.12s;
 }
-.fav-toggle:hover { border-color: var(--accent); color: var(--fg); }
-.fav-toggle[aria-pressed="true"] { color: var(--accent-hi); border-color: var(--accent); }
+.fav-toggle[hidden] { display: none; }
+.fav-toggle svg { display: block; }
+.fav-toggle:hover { opacity: 1; border-color: var(--accent); color: var(--fg); }
+.fav-toggle[aria-pressed="true"] {
+  opacity: 1;
+  color: var(--accent-hi);
+}
+.fav-toggle[aria-pressed="true"] svg { fill: currentColor; }
 
 .card .row { margin-top: 4px; }
 .card .row button {
@@ -463,15 +478,6 @@ kbd {
   border-color: var(--accent-hi);
   color: var(--accent-ink);
 }
-
-.fav-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.fav-toggle svg { flex: none; }
-.fav-toggle[aria-pressed="true"] svg { fill: var(--accent-hi); }
 
 /* ---- Session -------------------------------------------------------- */
 
