@@ -25,6 +25,27 @@ function externalHref(url) {
   }
 }
 
+// Fill the session caption link with the deviation's title and author, falling
+// back to a plain "source" when the API gave us neither. The title goes in its
+// own <span> so it can be brighter than the "by <author>" tail.
+function setPageLink(link, item) {
+  const title = (item.title || "").trim();
+  const author = (item.author || "").trim();
+  link.textContent = "";
+  if (title) {
+    const t = document.createElement("span");
+    t.className = "page-link-title";
+    t.textContent = `“${title}”`;
+    link.append(t);
+  }
+  if (author) link.append(`${title ? " " : ""}by ${author}`);
+  if (!title && !author) link.append("source");
+  link.append(" ↗");
+  link.title = [title && `“${title}”`, author && `by ${author}`]
+    .filter(Boolean)
+    .join(" ");
+}
+
 // ---- Toolbar dock position ----------------------------------------------
 
 const DOCK_KEY = "tsh:dock";
@@ -498,6 +519,20 @@ const session = {
   ticker: null,
 };
 
+// The black-screen countdown: shown before the first image (`start`) and
+// between images once the main timer expires, while the next image finishes
+// loading underneath. `n` counts down from COUNTDOWN_SECONDS; the big Pause
+// button freezes it there until the user resumes.
+const COUNTDOWN_SECONDS = 5;
+const countdown = {
+  active: false,
+  paused: false,
+  start: false,
+  n: COUNTDOWN_SECONDS,
+  final: false,
+  timer: null,
+};
+
 async function startSession() {
   const data = await api("/api/sessions", {
     method: "POST",
@@ -516,11 +551,12 @@ async function startSession() {
   setStartStatus("");
   show("session");
   resetPauseUI();
-  renderCurrent();
+  beginCountdown({ start: true });
 }
 
 function resetPauseUI() {
   session.paused = false;
+  cancelCountdown();
   const lbl = $("#controls button[data-action=pause] .lbl");
   if (lbl) lbl.textContent = "Pause";
   $("#paused-veil").hidden = true;
@@ -670,7 +706,8 @@ function renderCurrent() {
   const link = $("#page-link");
   const pageHref = externalHref(item.page_url);
   link.href = pageHref || "#";
-  link.style.visibility = pageHref ? "visible" : "hidden";
+  setPageLink(link, item);
+  $("#caption").style.visibility = pageHref ? "visible" : "hidden";
 
   resetZoom();
 
@@ -740,10 +777,121 @@ function updateTimer() {
   const t = $("#timer");
   t.textContent = formatTime(Math.max(0, session.remaining));
   t.classList.toggle("paused", session.paused);
+  // Swell + pulse the clock over its final three seconds. Re-add the class
+  // each tick so the CSS animation replays from the top.
+  const ending = session.remaining <= 3 && session.remaining > 0 && !session.paused;
+  t.classList.remove("ending");
+  if (ending) {
+    void t.offsetWidth;
+    t.classList.add("ending");
+  }
   const bar = $("#time-bar");
   if (bar) {
     const pct = Math.max(0, (session.remaining / state.duration) * 100);
     bar.style.width = pct + "%";
+  }
+}
+
+// ---- Black-screen countdown (session start + between images) ----------
+
+function showCountdownNumber(n) {
+  const el = $("#countdown-number");
+  el.textContent = String(n);
+  el.classList.remove("tick");
+  void el.offsetWidth; // restart the pop animation
+  el.classList.add("tick");
+}
+
+function setCountdownPauseLabel() {
+  const lbl = $("#countdown-pause .lbl");
+  if (lbl) lbl.textContent = countdown.paused ? "Resume" : "Pause";
+}
+
+function beginCountdown({ start = false } = {}) {
+  clearInterval(session.ticker);
+  session.ticker = null;
+  countdown.active = true;
+  countdown.paused = false;
+  countdown.start = start;
+  countdown.n = COUNTDOWN_SECONDS;
+  countdown.final = !start && session.index + 1 >= session.items.length;
+
+  const veil = $("#countdown-veil");
+  veil.classList.toggle("final", countdown.final);
+  veil.classList.toggle("start", start);
+  veil.classList.remove("paused");
+  const label = $("#countdown-label");
+  label.hidden = !(start || countdown.final);
+  label.textContent = start ? "Get ready" : "Final image";
+  $("#countdown-prev").hidden = start || session.index === 0;
+  setCountdownPauseLabel();
+  showCountdownNumber(countdown.n);
+  veil.hidden = false;
+
+  // The image we're counting toward is normally already warm (preloadAhead
+  // between images; the /api/sessions precache job for the first). Make sure
+  // it is at least in flight so the reveal after the count is instant.
+  const upcoming = start
+    ? session.items[0]
+    : countdown.final
+      ? null
+      : session.items[session.index + 1];
+  if (upcoming && !preloaded.has(upcoming.source_id)) {
+    const img = new Image();
+    img.src = imageUrl(upcoming);
+    preloaded.set(upcoming.source_id, img);
+  }
+
+  countdown.timer = setInterval(countdownTick, 1000);
+}
+
+function countdownTick() {
+  if (!countdown.active || countdown.paused) return;
+  countdown.n -= 1;
+  if (countdown.n >= 1) showCountdownNumber(countdown.n);
+  else finishCountdown();
+}
+
+function toggleCountdownPause() {
+  countdown.paused = !countdown.paused;
+  $("#countdown-veil").classList.toggle("paused", countdown.paused);
+  setCountdownPauseLabel();
+}
+
+// Tear down the countdown without advancing — used when the user navigates
+// away (prev / skip / reroll / end) mid-count.
+function cancelCountdown() {
+  if (!countdown.active) return;
+  clearInterval(countdown.timer);
+  countdown.timer = null;
+  countdown.active = false;
+  countdown.paused = false;
+  countdown.start = false;
+  const veil = $("#countdown-veil");
+  veil.hidden = true;
+  veil.classList.remove("paused");
+}
+
+// The count reached zero: drop the veil and reveal the image it was counting
+// toward — the first one at session start, otherwise the next (or the done
+// screen when the last image's timer just ran out).
+function finishCountdown() {
+  const wasStart = countdown.start;
+  clearInterval(countdown.timer);
+  countdown.timer = null;
+  countdown.active = false;
+  countdown.paused = false;
+  countdown.start = false;
+  const veil = $("#countdown-veil");
+  veil.hidden = true;
+  veil.classList.remove("paused");
+  if (wasStart) {
+    renderCurrent();
+  } else if (session.index + 1 >= session.items.length) {
+    finishSession();
+  } else {
+    session.index += 1;
+    renderCurrent();
   }
 }
 
@@ -752,27 +900,31 @@ function restartTicker() {
   session.ticker = setInterval(() => {
     if (session.paused) return;
     session.remaining -= 1;
-    if (session.remaining <= 0) {
-      next();
-    } else {
-      updateTimer();
-    }
+    updateTimer();
+    if (session.remaining <= 0) beginCountdown();
   }, 1000);
 }
 
 function next() {
+  // During the "Get ready" countdown, skip means "start now", not "skip the
+  // first image".
+  if (countdown.active && countdown.start) return finishCountdown();
+  cancelCountdown();
   if (session.index + 1 >= session.items.length) return finishSession();
   session.index += 1;
   renderCurrent();
 }
 
 function prev() {
+  if (countdown.active && countdown.start) return finishCountdown();
+  cancelCountdown();
   if (session.index === 0) return;
   session.index -= 1;
   renderCurrent();
 }
 
 function togglePause() {
+  if (countdown.active) return toggleCountdownPause();
   session.paused = !session.paused;
   const lbl = $("#controls button[data-action=pause] .lbl");
   if (lbl) lbl.textContent = session.paused ? "Resume" : "Pause";
@@ -781,6 +933,7 @@ function togglePause() {
 }
 
 function reroll() {
+  cancelCountdown();
   if (session.pool.length === 0) return;
   const swapIn = session.pool.splice(
     Math.floor(Math.random() * session.pool.length),
@@ -806,6 +959,7 @@ function renderFavButton() {
 
 function finishSession() {
   clearInterval(session.ticker);
+  cancelCountdown();
   $("#done-summary").textContent = `You practiced ${session.items.length} images at ${state.duration}s each.`;
   renderFavButton();
   show("done");
@@ -813,6 +967,7 @@ function finishSession() {
 
 function endSession() {
   clearInterval(session.ticker);
+  cancelCountdown();
   renderSaved();
   loadAuthStatus();
   show("start");
@@ -827,6 +982,13 @@ $("#fav-btn").addEventListener("click", () => {
     thumb: state.listThumb || "",
   });
   renderFavButton();
+});
+
+$("#countdown-pause").addEventListener("click", () => {
+  if (countdown.active) toggleCountdownPause();
+});
+$("#countdown-prev").addEventListener("click", () => {
+  if (countdown.active) prev();
 });
 
 $("#controls").addEventListener("click", (event) => {

@@ -659,21 +659,42 @@ kbd {
 #progress {
   padding-top: 9px;
   font-variant-numeric: tabular-nums;
+  grid-column: 1;
 }
 #timer {
   font: 400 30px/1 ui-monospace, "SF Mono", Menlo, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--fg);
+  grid-column: 2;
 }
 #timer.paused { color: var(--accent); }
+
+/* Author / title caption, anchored to the bottom edge so the longer text
+   stays clear of the top HUD and the middle of the reference image. */
+#caption {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 2;
+  padding: 26px 18px 12px;
+  font-size: 13px;
+  text-align: center;
+  background: linear-gradient(to top, rgba(8, 9, 10, 0.8), rgba(8, 9, 10, 0.32) 55%, transparent);
+  pointer-events: none;
+}
 #page-link {
-  justify-self: end;
-  padding-top: 9px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
   color: var(--fg-dim);
   text-decoration: none;
   pointer-events: auto;
 }
+#page-link .page-link-title { color: var(--fg); }
 #page-link:hover { color: var(--accent); }
+#page-link:hover .page-link-title { color: var(--accent); }
 
 #paused-veil {
   position: absolute;
@@ -697,6 +718,86 @@ kbd {
   text-transform: uppercase;
   color: var(--fg-dim);
 }
+
+/* ---- Black-screen countdown (session start + between images) --------- */
+
+/* The main clock swells and pulses over its final three seconds so the
+   timeout doesn't take the user by surprise. */
+#timer.ending {
+  color: var(--accent-hi);
+  animation: timer-pop 1s ease-out;
+}
+@keyframes timer-pop {
+  0% { transform: scale(1.35); }
+  40% { transform: scale(1); }
+}
+
+/* Before the first image, and once each image's time is up, the stage goes
+   black and a big countdown plays while the target image loads underneath.
+   Between images it fades in (from the outgoing image); at session start
+   there's nothing to fade from, so `.start` shows it at once. */
+#countdown-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 30px;
+  background: #0a0b0c;
+  opacity: 0;
+  animation: countdown-fade 0.55s ease forwards;
+}
+@keyframes countdown-fade { to { opacity: 1; } }
+#countdown-veil.start { animation: none; opacity: 1; }
+
+#countdown-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+#countdown-number {
+  font: 400 clamp(90px, 22vw, 220px) / 1 ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+#countdown-number.tick { animation: countdown-tick 0.9s ease-out; }
+@keyframes countdown-tick {
+  0% { transform: scale(1.3); opacity: 0.35; }
+  30% { transform: scale(1); opacity: 1; }
+}
+#countdown-veil.final #countdown-number { color: var(--accent-hi); }
+
+#countdown-actions {
+  display: flex;
+  gap: 12px;
+}
+#countdown-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 26px;
+  font: 600 15px/1 system-ui, sans-serif;
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+#countdown-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent-hi);
+  background: rgba(255, 255, 255, 0.09);
+}
+#countdown-pause .icon-resume { display: none; }
+#countdown-veil.paused #countdown-pause .icon-pause { display: none; }
+#countdown-veil.paused #countdown-pause .icon-resume { display: block; }
 
 /* Toolbar */
 #controls {
