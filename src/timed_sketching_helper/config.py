@@ -20,6 +20,11 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
 # says. A session only ever shows a handful; a few hundred is plenty of variety.
 HARD_MAX_IMAGES = 1000
 
+# Default cap on images fetched for a single list, absent MAX_IMAGES / the
+# "Limit images fetched" advanced option. Lower than HARD_MAX_IMAGES so a
+# fresh fetch doesn't wait on a huge gallery by default.
+DEFAULT_MAX_IMAGES = 300
+
 # Stop a single list fetch after this many upstream API requests. Unlike
 # MAX_IMAGES this is a *default*, not a ceiling — a big album that is mostly
 # sensitive images (all filtered out) can page forever without the image count
@@ -31,9 +36,9 @@ HARD_MAX_REQUESTS = 1000
 
 def _as_max_images(value: str | None) -> int:
     try:
-        n = int(value) if value is not None else HARD_MAX_IMAGES
+        n = int(value) if value is not None else DEFAULT_MAX_IMAGES
     except ValueError:
-        n = HARD_MAX_IMAGES
+        n = DEFAULT_MAX_IMAGES
     return max(1, min(n, HARD_MAX_IMAGES))
 
 
@@ -64,7 +69,7 @@ class Config:
     mature_content: bool
     data_dir: Path
     list_ttl_hours: int
-    max_images: int = HARD_MAX_IMAGES
+    max_images: int = DEFAULT_MAX_IMAGES
     max_requests: int = DEFAULT_MAX_REQUESTS
 
     @property

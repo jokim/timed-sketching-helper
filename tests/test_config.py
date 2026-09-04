@@ -1,9 +1,9 @@
 from timed_sketching_helper.config import load_config
 
 
-def test_max_images_defaults_to_1000(monkeypatch):
+def test_max_images_defaults_to_300(monkeypatch):
     monkeypatch.delenv("MAX_IMAGES", raising=False)
-    assert load_config().max_images == 1000
+    assert load_config().max_images == 300
 
 
 def test_max_images_reads_env(monkeypatch):

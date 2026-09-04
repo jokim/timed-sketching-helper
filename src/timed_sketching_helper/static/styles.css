@@ -996,6 +996,11 @@ body[data-activity] #view-session[data-compact] #controls,
 /* keep the zoom buttons clear of a right-docked floating bar */
 #view-session[data-compact][data-dock="right"] #zoom { right: 62px; }
 
+/* Bottom-docked + minimized: the caption (title) stays anchored to the very
+   bottom edge — it's the one thing left visible once the toolbar fades out —
+   so lift the floating toolbar to sit above it instead of on top of it. */
+#view-session[data-compact][data-dock="bottom"] #controls { bottom: 44px; }
+
 /* ---- Small screens: force a top toolbar ---------------------------- */
 
 @media (max-width: 640px) {

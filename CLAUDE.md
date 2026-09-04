@@ -109,9 +109,10 @@ Key design points, each spanning several files:
   (eases toward — never reaches — 100%, since total request count is unknown).
 
 - **Fetch cap.** `DeviantArtProvider._collect` stops paginating once a list
-  reaches `max_images` (from `MAX_IMAGES`, default and hard ceiling
-  `config.HARD_MAX_IMAGES` = 1000) — a session shows a handful, so fetching
-  thousands is wasted work. `main._default_resolver` passes `cfg.max_images`;
+  reaches `max_images` (from `MAX_IMAGES`, default `config.DEFAULT_MAX_IMAGES`
+  = 300, hard ceiling `config.HARD_MAX_IMAGES` = 1000) — a session shows a
+  handful, so fetching thousands is wasted work. `main._default_resolver`
+  passes `cfg.max_images`;
   the constructor re-clamps to the ceiling. `list_images(..., max_images=N)`
   (threaded from the `max_images` field on `POST /api/lists` / `get_list`, set
   by the "Limit images fetched" advanced option) lowers the cap for one fetch

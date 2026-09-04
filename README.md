@@ -83,8 +83,8 @@ to the start screen.
 - Fetched lists and downloaded image bytes are cached under `./data/`
   (`app.db` + `cache/`, both safe to delete). A list older than
   `LIST_TTL_HOURS` (24 by default) is re-fetched on the next session.
-- A list fetch stops at `MAX_IMAGES` deviations (1000 by default, and the hard
-  ceiling) — a session only ever shows a handful.
+- A list fetch stops at `MAX_IMAGES` deviations (300 by default, hard ceiling
+  1000) — a session only ever shows a handful.
 - Images download lazily: each is fetched the first time it's shown, and the
   session's images are pre-downloaded in the background. If a signed image link
   has expired by the time you view it, the list is re-fetched and the image
