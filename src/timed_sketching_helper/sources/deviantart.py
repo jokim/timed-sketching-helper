@@ -369,6 +369,79 @@ class DeviantArtProvider:
         progress.flush()
         return images
 
+    async def list_collections(self, username: str) -> list[dict]:
+        """List a user's favourites folders as ready-to-use reference entries.
+
+        Each entry's ``url`` is built with ``_slugify`` — the same normalisation
+        ``_folder_id_by_name`` uses to match a URL's folder slug back to a real
+        folder name — so it round-trips through ``parse()`` regardless of
+        punctuation in the folder name. The numeric path segment is a dummy
+        ("0"); only the slug is used to resolve the folder.
+
+        Each real folder also costs one extra request for its ``thumb_url``
+        (there is no `/collections/all` aggregate to get one for "All
+        favourites", so that entry's is always ``None``) — bounded by the
+        same request budget as everything else, and stopped early on a rate
+        limit the way ``_collect`` already does for a full fetch.
+        """
+        progress = _Progress(None, self._max_requests)
+        async with httpx.AsyncClient(
+            timeout=30.0, headers={"User-Agent": USER_AGENT}
+        ) as client:
+            folders = await self._folders(client, "collections", username, progress)
+            collections = [
+                {
+                    "name": "All favourites",
+                    "url": f"https://www.deviantart.com/{username}/favourites/all",
+                    "size": None,
+                    "thumb_url": None,
+                }
+            ]
+            rate_limited = False
+            for folder in folders:
+                name = folder.get("name", "")
+                thumb_url = None
+                if not rate_limited and not progress.exhausted:
+                    try:
+                        thumb_url = await self._folder_thumb(
+                            client, folder["folderid"], username, progress
+                        )
+                    except DeviantArtRateLimitError:
+                        rate_limited = True
+                collections.append(
+                    {
+                        "name": name,
+                        "url": f"https://www.deviantart.com/{username}/favourites/0/{_slugify(name)}",
+                        "size": folder.get("size"),
+                        "thumb_url": thumb_url,
+                    }
+                )
+        return collections
+
+    async def _folder_thumb(
+        self,
+        client: httpx.AsyncClient,
+        folder_id: str,
+        username: str,
+        progress: _Progress,
+    ) -> str | None:
+        try:
+            payload = await self._get(
+                client,
+                f"/collections/{folder_id}",
+                params={"username": username, "offset": 0, "limit": 1},
+            )
+        except DeviantArtRateLimitError:
+            raise
+        except DeviantArtApiError:
+            return None
+        finally:
+            progress.request_done()
+        results = payload.get("results") or []
+        if not results:
+            return None
+        return results[0].get("content", {}).get("src")
+
     async def _iter_folders(
         self,
         client: httpx.AsyncClient,

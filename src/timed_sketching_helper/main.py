@@ -107,15 +107,7 @@ class PrefsRequest(BaseModel):
     default_duration: int = Field(ge=1, le=3600)
 
 
-def _default_resolver(cfg: Config, user_token=None):
-    provider = DeviantArtProvider(
-        cfg.deviantart_client_id,
-        cfg.deviantart_client_secret,
-        user_token=user_token,
-        max_images=cfg.max_images,
-        max_requests=cfg.max_requests,
-    )
-
+def _default_resolver(provider: DeviantArtProvider):
     def resolver(url: str) -> SourceProvider:
         if provider.matches(url):
             return provider
@@ -156,7 +148,14 @@ def create_app(
     async def _user_token(*, force: bool = False) -> str | None:
         return await oauth.access_token(db.current_account(), force=force)
 
-    resolver = resolver or _default_resolver(cfg, _user_token)
+    deviantart_provider = DeviantArtProvider(
+        cfg.deviantart_client_id,
+        cfg.deviantart_client_secret,
+        user_token=_user_token,
+        max_images=cfg.max_images,
+        max_requests=cfg.max_requests,
+    )
+    resolver = resolver or _default_resolver(deviantart_provider)
 
     # One lock per list source URL so a burst of image requests for the same
     # list triggers at most one signed-URL refresh.
@@ -442,6 +441,14 @@ def create_app(
     async def deviantart_logout() -> Response:
         oauth.logout(db.current_account())
         return Response(status_code=204)
+
+    @app.get("/api/deviantart/collections")
+    async def deviantart_collections() -> dict:
+        status = oauth.status(db.current_account())
+        if not status["connected"]:
+            raise HTTPException(401, "Connect DeviantArt to list collections.")
+        collections = await deviantart_provider.list_collections(status["username"])
+        return {"username": status["username"], "collections": collections}
 
     @app.get("/api/recent")
     async def recent() -> list[dict]:

@@ -235,15 +235,19 @@ function displayTitle(entry) {
   return title;
 }
 
+// `entry.thumb` is a source_id resolved through our own image cache;
+// `entry.thumb_url` (collections) is already an absolute DeviantArt CDN URL,
+// hot-linked directly since it's just a preview and not worth caching.
 function savedThumb(entry) {
   const box = document.createElement("span");
   box.className = "saved-thumb";
-  box.textContent = (entry.kind || entry.title || "?").trim().charAt(0).toUpperCase() || "?";
-  if (entry.thumb) {
+  box.textContent = (entry.kind || entry.title || entry.name || "?").trim().charAt(0).toUpperCase() || "?";
+  const src = entry.thumb_url || (entry.thumb ? `/api/images/${encodeURIComponent(entry.thumb)}` : null);
+  if (src) {
     const img = document.createElement("img");
     img.loading = "lazy";
     img.alt = "";
-    img.src = `/api/images/${encodeURIComponent(entry.thumb)}`;
+    img.src = src;
     img.addEventListener("error", () => img.remove());
     box.appendChild(img);
   }
@@ -297,12 +301,17 @@ function fillSavedGroup(id, entries) {
   group.hidden = entries.length === 0;
 }
 
+function updateSavedVisibility() {
+  const anySaved = readStore(FAV_KEY).length > 0 || readStore(RECENT_KEY).length > 0;
+  $("#saved").hidden = !anySaved && $("#saved-collections").hidden;
+}
+
 function renderSaved() {
   const favorites = readStore(FAV_KEY);
   const recent = readStore(RECENT_KEY);
   fillSavedGroup("saved-favorites", favorites);
   fillSavedGroup("saved-recent", recent);
-  $("#saved").hidden = favorites.length === 0 && recent.length === 0;
+  updateSavedVisibility();
 
   const list = $("#recent-urls");
   list.innerHTML = "";
@@ -329,6 +338,146 @@ $("#saved").addEventListener("click", (event) => {
     renderSaved();
   }
 });
+
+// ---- Collections (connected DeviantArt account's favourites folders) ------
+//
+// Fetched from the backend (it needs the OAuth token), then cached in
+// localStorage so reconnecting/reloading doesn't re-hit the API every time.
+
+const COLLECTIONS_KEY = "tsh:collections";
+// Matches the default list cache TTL (config.LIST_TTL_HOURS) so a "how fresh
+// is this" story stays consistent across the app.
+const COLLECTIONS_TTL_MS = 24 * 60 * 60 * 1000;
+let connectedUsername = null;
+
+function readCollectionsCache(username) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(COLLECTIONS_KEY) || "null");
+    if (!cached || cached.username !== username) return null;
+    if (Date.now() - cached.fetchedAt > COLLECTIONS_TTL_MS) return null;
+    return cached.collections;
+  } catch {
+    return null;
+  }
+}
+
+function writeCollectionsCache(username, collections) {
+  try {
+    localStorage.setItem(
+      COLLECTIONS_KEY,
+      JSON.stringify({ username, fetchedAt: Date.now(), collections }),
+    );
+  } catch {
+    /* private mode / blocked storage — just refetches next time */
+  }
+}
+
+function setCollectionsStatus(text) {
+  const status = $("#saved-collections .saved-status");
+  status.textContent = text;
+  status.hidden = !text;
+}
+
+function collectionRow(entry) {
+  const li = document.createElement("li");
+  li.className = "saved-row";
+
+  const pick = document.createElement("button");
+  pick.type = "button";
+  pick.className = "saved-pick";
+  pick.dataset.url = entry.url;
+  pick.dataset.act = "pick";
+  const name = document.createElement("span");
+  name.className = "saved-name";
+  name.textContent = entry.name;
+  pick.appendChild(name);
+  if (entry.size != null) {
+    const sub = document.createElement("span");
+    sub.className = "saved-url";
+    sub.textContent = `${entry.size} image${entry.size === 1 ? "" : "s"}`;
+    pick.appendChild(sub);
+  }
+
+  li.append(savedThumb(entry), pick);
+  return li;
+}
+
+function renderCollections(collections) {
+  const group = $("#saved-collections");
+  const ul = group.querySelector(".saved-list");
+  ul.innerHTML = "";
+  for (const entry of collections) ul.appendChild(collectionRow(entry));
+  setCollectionsStatus("");
+  group.hidden = false;
+  updateSavedVisibility();
+}
+
+function clearCollections() {
+  connectedUsername = null;
+  const group = $("#saved-collections");
+  group.hidden = true;
+  group.querySelector(".saved-list").innerHTML = "";
+  setCollectionsStatus("");
+  updateSavedVisibility();
+}
+
+async function loadCollections(username, { force = false } = {}) {
+  if (!force) {
+    const cached = readCollectionsCache(username);
+    if (cached) {
+      renderCollections(cached);
+      return;
+    }
+  }
+  $("#saved-collections").hidden = false;
+  updateSavedVisibility();
+  setCollectionsStatus("Loading your collections…");
+  try {
+    const data = await api("/api/deviantart/collections");
+    writeCollectionsCache(data.username, data.collections);
+    renderCollections(data.collections);
+  } catch {
+    setCollectionsStatus("Couldn't load collections.");
+  }
+}
+
+$("#collections-refresh").addEventListener("click", (event) => {
+  // Nested inside the <summary>; don't let the click also toggle collapse.
+  event.preventDefault();
+  event.stopPropagation();
+  if (connectedUsername) loadCollections(connectedUsername, { force: true });
+});
+
+// ---- Collapsible saved groups -----------------------------------------
+//
+// Each group is a native <details>; open/closed state persists per group.
+
+const GROUP_OPEN_KEY = "tsh:group-open";
+
+function readGroupOpenState() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(GROUP_OPEN_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+for (const group of document.querySelectorAll(".saved-group")) {
+  const state = readGroupOpenState();
+  if (Object.prototype.hasOwnProperty.call(state, group.id)) {
+    group.open = state[group.id];
+  }
+  group.addEventListener("toggle", () => {
+    const state = readGroupOpenState();
+    state[group.id] = group.open;
+    try {
+      localStorage.setItem(GROUP_OPEN_KEY, JSON.stringify(state));
+    } catch {
+      /* private mode / blocked storage — collapse state just won't persist */
+    }
+  });
+}
 
 // ---- Start view ------------------------------------------------------------
 
@@ -368,8 +517,11 @@ async function loadAuthStatus() {
       setAuthBtnLabel(btn, "Disconnect");
       btn.onclick = async () => {
         await fetch("/auth/deviantart/logout", { method: "POST" });
+        clearCollections();
         loadAuthStatus();
       };
+      connectedUsername = status.username;
+      loadCollections(status.username);
     } else {
       text.textContent =
         "Connect to your DeviantArt account more functionality.";
@@ -377,10 +529,12 @@ async function loadAuthStatus() {
       btn.onclick = () => {
         window.location.href = "/auth/deviantart/login";
       };
+      clearCollections();
     }
     wrap.hidden = false;
   } catch {
     wrap.hidden = true;
+    clearCollections();
   }
 }
 

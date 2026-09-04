@@ -104,14 +104,28 @@
           </div>
 
           <aside id="saved" hidden>
-            <section class="saved-group" id="saved-favorites" hidden>
-              <h2 class="saved-title">Favorites</h2>
+            <details class="saved-group" id="saved-collections" open hidden>
+              <summary class="saved-title">
+                Your collections
+                <button type="button" id="collections-refresh" title="Refresh collections" aria-label="Refresh collections">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+                    stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 11a8 8 0 0 1 13.4-5.9L20 8" /><path d="M20 3v5h-5" />
+                    <path d="M21 13a8 8 0 0 1-13.4 5.9L4 16" /><path d="M4 21v-5h5" />
+                  </svg>
+                </button>
+              </summary>
+              <p class="saved-status" hidden></p>
               <ul class="saved-list"></ul>
-            </section>
-            <section class="saved-group" id="saved-recent" hidden>
-              <h2 class="saved-title">Last added</h2>
+            </details>
+            <details class="saved-group" id="saved-favorites" open hidden>
+              <summary class="saved-title">Favorites</summary>
               <ul class="saved-list"></ul>
-            </section>
+            </details>
+            <details class="saved-group" id="saved-recent" open hidden>
+              <summary class="saved-title">Last added</summary>
+              <ul class="saved-list"></ul>
+            </details>
           </aside>
         </div>
       </section>

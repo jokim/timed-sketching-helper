@@ -176,6 +176,69 @@ def test_logout_disconnects(auth_client, conn):
     assert auth_client.get("/auth/deviantart/status").json()["connected"] is False
 
 
+def test_collections_requires_connection(auth_client):
+    res = auth_client.get("/api/deviantart/collections")
+
+    assert res.status_code == 401
+
+
+@respx.mock
+def test_collections_lists_connected_users_favourites_folders(auth_client, conn):
+    db_module.save_oauth(
+        conn,
+        1,
+        access_token="a",
+        refresh_token="r",
+        expires_at="2999-01-01T00:00:00+00:00",
+        scope="",
+        username="ninjatron",
+    )
+    respx.mock.get(
+        url__startswith="https://www.deviantart.com/api/v1/oauth2/collections/folders"
+    ).mock(
+        return_value=httpx.Response(
+            200, json={"results": [{"folderid": "999", "name": "Cool Refs"}]}
+        )
+    )
+    respx.mock.get(
+        url__startswith="https://www.deviantart.com/api/v1/oauth2/collections/999"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "deviationid": "a",
+                        "content": {"src": "https://images.example/a.jpg"},
+                    }
+                ],
+                "has_more": False,
+            },
+        )
+    )
+
+    res = auth_client.get("/api/deviantart/collections")
+
+    assert res.status_code == 200
+    assert res.json() == {
+        "username": "ninjatron",
+        "collections": [
+            {
+                "name": "All favourites",
+                "url": "https://www.deviantart.com/ninjatron/favourites/all",
+                "size": None,
+                "thumb_url": None,
+            },
+            {
+                "name": "Cool Refs",
+                "url": "https://www.deviantart.com/ninjatron/favourites/0/cool-refs",
+                "size": None,
+                "thumb_url": "https://images.example/a.jpg",
+            },
+        ],
+    }
+
+
 @respx.mock
 def test_create_list_then_read_and_recent(client):
     created = client.post("/api/lists", json={"url": GALLERY_URL}).json()

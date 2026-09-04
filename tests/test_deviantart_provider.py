@@ -966,3 +966,89 @@ async def test_list_images_keeps_viewable_mature_content_for_logged_in_user():
 
     assert [i.source_id for i in images] == ["visible"]
     assert route.calls[0].request.url.params["mature_content"] == "true"
+
+
+@respx.mock
+async def test_list_collections_returns_all_favourites_plus_named_folders():
+    _token_route(respx.mock)
+    folders = respx.mock.get(url__startswith=f"{API_BASE}/collections/folders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"folderid": "999", "name": "Cool Refs", "size": 42},
+                    {"folderid": "111", "name": "Confused, bi-product"},
+                ]
+            },
+        )
+    )
+    respx.mock.get(url__startswith=f"{API_BASE}/collections/999").mock(
+        return_value=httpx.Response(
+            200, json={"results": [_deviation("a")], "has_more": False}
+        )
+    )
+    respx.mock.get(url__startswith=f"{API_BASE}/collections/111").mock(
+        return_value=httpx.Response(
+            200, json={"results": [_deviation("b")], "has_more": False}
+        )
+    )
+
+    collections = await DeviantArtProvider("id", "secret").list_collections("artist")
+
+    assert folders.called
+    assert collections == [
+        {
+            "name": "All favourites",
+            "url": "https://www.deviantart.com/artist/favourites/all",
+            "size": None,
+            "thumb_url": None,
+        },
+        {
+            "name": "Cool Refs",
+            "url": "https://www.deviantart.com/artist/favourites/0/cool-refs",
+            "size": 42,
+            "thumb_url": "https://images.example/a.jpg",
+        },
+        {
+            "name": "Confused, bi-product",
+            "url": "https://www.deviantart.com/artist/favourites/0/confused-bi-product",
+            "size": None,
+            "thumb_url": "https://images.example/b.jpg",
+        },
+    ]
+
+
+@respx.mock
+async def test_list_collections_thumb_is_none_for_empty_folder():
+    _token_route(respx.mock)
+    respx.mock.get(url__startswith=f"{API_BASE}/collections/folders").mock(
+        return_value=httpx.Response(
+            200, json={"results": [{"folderid": "999", "name": "Empty"}]}
+        )
+    )
+    respx.mock.get(url__startswith=f"{API_BASE}/collections/999").mock(
+        return_value=httpx.Response(200, json={"results": [], "has_more": False})
+    )
+
+    collections = await DeviantArtProvider("id", "secret").list_collections("artist")
+
+    assert collections[1]["thumb_url"] is None
+
+
+@respx.mock
+async def test_list_collections_skips_thumbs_once_request_budget_exhausted():
+    _token_route(respx.mock)
+    folders = respx.mock.get(url__startswith=f"{API_BASE}/collections/folders").mock(
+        return_value=httpx.Response(
+            200, json={"results": [{"folderid": "999", "name": "Cool Refs"}]}
+        )
+    )
+    detail = respx.mock.get(url__startswith=f"{API_BASE}/collections/999")
+
+    collections = await DeviantArtProvider(
+        "id", "secret", max_requests=1
+    ).list_collections("artist")
+
+    assert folders.called
+    assert not detail.called
+    assert collections[1]["thumb_url"] is None

@@ -357,10 +357,50 @@ kbd {
 
 .saved-title {
   margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.saved-title::-webkit-details-marker { display: none; }
+.saved-title::before {
+  content: "▸";
+  display: inline-block;
+  color: var(--muted);
+  transition: transform 0.12s;
+}
+.saved-group[open] > .saved-title::before { transform: rotate(90deg); }
+.saved-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.saved-title button {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.saved-title button:hover { color: var(--accent); }
+
+.saved-status {
+  margin: 0 0 8px;
+  font-size: 12px;
   color: var(--muted);
 }
 
