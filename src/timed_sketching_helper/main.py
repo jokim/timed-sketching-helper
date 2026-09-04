@@ -54,6 +54,9 @@ DEFAULT_TRUSTED_HOSTS = ["localhost", "127.0.0.1"]
 # Methods that never change state, so they need no cross-site-origin check.
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
+# How many reroll-pool images to keep pre-downloaded as instant-swap backups.
+BACKUP_POOL_SIZE = 3
+
 
 def _is_cross_site_write(request: Request, origin_hosts: set[str] | None) -> bool:
     """Whether an unsafe-method request looks like it came from another site.
@@ -93,6 +96,10 @@ class SessionRequest(BaseModel):
     list_id: int
     count: int = Field(ge=1, le=500)
     duration: int = Field(ge=1, le=3600)
+
+
+class PrecacheRequest(BaseModel):
+    source_ids: list[str]
 
 
 class PrefsRequest(BaseModel):
@@ -208,6 +215,17 @@ def create_app(
                 await ensure_image(item.source_id)
             except Exception:  # noqa: BLE001
                 logger.warning("Pre-cache: could not fetch %s", item.source_id)
+
+    async def precache_ids(source_ids: list[str]) -> None:
+        """Best-effort background download for ids the frontend names directly
+        (topping up the reroll backup pool); no session state is looked up."""
+        for source_id in source_ids:
+            if cache.open_cached(source_id) is not None:
+                continue
+            try:
+                await ensure_image(source_id)
+            except Exception:  # noqa: BLE001 - a background nicety, never fatal
+                logger.warning("Pre-cache: could not fetch %s", source_id)
 
     app = FastAPI(title="Timed Sketching Helper")
 
@@ -347,12 +365,21 @@ def create_app(
             raise HTTPException(404, "List not found.")
         by_id = {i.source_id: i for i in image_list.items}
         selected, pool = build_session(list(by_id), body.count)
-        background_tasks.add_task(precache, [by_id[s] for s in selected])
+        backup = pool[:BACKUP_POOL_SIZE]
+        background_tasks.add_task(precache, [by_id[s] for s in selected + backup])
         return {
             "duration": body.duration,
             "items": [_item_dto(by_id[s]) for s in selected],
             "reroll_pool": [_item_dto(by_id[s]) for s in pool],
         }
+
+    @app.post("/api/precache")
+    async def precache_backup(
+        body: PrecacheRequest, background_tasks: BackgroundTasks
+    ) -> dict:
+        """Top up the reroll backup pool after a swap; best-effort, fire-and-forget."""
+        background_tasks.add_task(precache_ids, body.source_ids)
+        return {"status": "queued"}
 
     @app.get("/api/images/{source_id}")
     async def read_image(source_id: str) -> FileResponse:

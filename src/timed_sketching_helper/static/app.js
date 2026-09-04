@@ -99,6 +99,59 @@ function setCompact(on) {
   }
 }
 
+// ---- Countdown beep -------------------------------------------------------
+// A short, calm tick plays each of the final BEEP_WINDOW seconds before an
+// image's timer runs out, so the user notices without being startled. Synthesized
+// via Web Audio (no asset file); the AudioContext is created lazily on first
+// use, which only happens once a session is running — well after the "Start
+// practice" click that satisfies browsers' autoplay-gesture requirement.
+
+const AUDIO_KEY = "tsh:audio";
+const BEEP_WINDOW = 5;
+
+let audioCtx = null;
+
+function readAudioEnabled() {
+  try {
+    return localStorage.getItem(AUDIO_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function setAudioEnabled(on) {
+  try {
+    localStorage.setItem(AUDIO_KEY, on ? "1" : "0");
+  } catch {
+    /* private mode / blocked storage — still applies for this session */
+  }
+  const btn = $("#controls button[data-action=audio]");
+  if (btn) {
+    btn.setAttribute("aria-pressed", String(!on));
+    btn.title = on ? "Mute countdown beep" : "Unmute countdown beep";
+  }
+}
+
+function playBeep() {
+  if (!audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    audioCtx = new Ctx();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = 800;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.15, now + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.15);
+}
+
 async function api(path, options) {
   const res = await fetch(path, options);
   const body = await res.json().catch(() => ({}));
@@ -902,6 +955,7 @@ function restartTicker() {
     session.remaining -= 1;
     updateTimer();
     if (session.remaining <= 0) beginCountdown();
+    else if (session.remaining <= BEEP_WINDOW && readAudioEnabled()) playBeep();
   }, 1000);
 }
 
@@ -932,16 +986,31 @@ function togglePause() {
   updateTimer();
 }
 
+// The reroll pool arrives pre-shuffled from the backend, so taking it from the
+// front is exactly as random as picking any index — but keeps the array
+// aligned with the backup images the backend has pre-downloaded (see
+// BACKUP_POOL_SIZE), so a reroll can swap in an already-cached image. The
+// image being swapped out is *not* returned to the pool: once an image has
+// been shown, it should never reappear later in the same session.
+const BACKUP_POOL_SIZE = 3;
+
 function reroll() {
   cancelCountdown();
   if (session.pool.length === 0) return;
-  const swapIn = session.pool.splice(
-    Math.floor(Math.random() * session.pool.length),
-    1,
-  )[0];
-  session.pool.push(session.items[session.index]);
+  const swapIn = session.pool.shift();
   session.items[session.index] = swapIn;
   renderCurrent();
+  topUpBackupPool();
+}
+
+function topUpBackupPool() {
+  const ids = session.pool.slice(0, BACKUP_POOL_SIZE).map((it) => it.source_id);
+  if (ids.length === 0) return;
+  api("/api/precache", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_ids: ids }),
+  }).catch(() => {});
 }
 
 function renderFavButton() {
@@ -1005,6 +1074,7 @@ $("#controls").addEventListener("click", (event) => {
   else if (action === "reroll") reroll();
   else if (action === "end") endSession();
   else if (action === "compact") setCompact(!readCompact());
+  else if (action === "audio") setAudioEnabled(!readAudioEnabled());
 });
 
 document.addEventListener("keydown", (event) => {
@@ -1053,6 +1123,7 @@ function initIdleWatcher() {
 
 setDock(readDock());
 setCompact(readCompact());
+setAudioEnabled(readAudioEnabled());
 initIdleWatcher();
 initZoomControls();
 initRangeInputs();

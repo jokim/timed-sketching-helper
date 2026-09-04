@@ -843,6 +843,9 @@ kbd {
 }
 
 .compact-toggle .icon-expand { display: none; }
+.audio-toggle .icon-audio-off { display: none; }
+.audio-toggle[aria-pressed="true"] .icon-audio-on { display: none; }
+.audio-toggle[aria-pressed="true"] .icon-audio-off { display: block; }
 
 #controls button {
   display: inline-flex;
@@ -861,11 +864,13 @@ kbd {
 #controls button:hover { color: var(--fg); border-color: var(--accent); }
 
 #controls .end,
+#controls .audio-toggle,
 #controls .compact-toggle {
   background: transparent;
   color: var(--fg-dim);
 }
 #controls .end:hover,
+#controls .audio-toggle:hover,
 #controls .compact-toggle:hover { color: var(--accent); border-color: var(--accent); }
 
 .dock {

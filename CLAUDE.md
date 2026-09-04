@@ -148,10 +148,35 @@ Key design points, each spanning several files:
   `create_app.ensure_image`, which — if the stored signed URL has expired —
   re-fetches the list once (`force_refresh=True`, under a per-list
   `asyncio.Lock`) to rotate the URLs and retries. `POST /api/sessions` kicks
-  off a `BackgroundTasks` job (`create_app.precache`) that pre-downloads just
-  the session's shown images; `static/app.js` `preloadAhead()` warms the next
-  `PRELOAD_AHEAD` (3) images in the browser cache and retains the `Image`
-  objects (in `preloaded`) so the bytes stay decoded.
+  off a `BackgroundTasks` job (`create_app.precache`) that pre-downloads the
+  session's shown images *plus* the first `BACKUP_POOL_SIZE` (3) images of the
+  reroll pool, so an instant reroll has a warm image ready; `static/app.js`
+  `preloadAhead()` separately warms the next `PRELOAD_AHEAD` (3) images in the
+  browser cache and retains the `Image` objects (in `preloaded`) so the bytes
+  stay decoded.
+
+- **Reroll swaps in the pre-downloaded backup pool, never a used image.**
+  `POST /api/sessions` returns `reroll_pool` already shuffled (it's a slice of
+  the same shuffled list `items` came from), so `app.js` `reroll()` takes it
+  from the front (`pool.shift()`) rather than a random index — identically
+  random, but keeping the front of the array aligned with the images
+  `BACKUP_POOL_SIZE` already precached server-side. The swapped-out image is
+  **not** returned to the pool, so once shown it can never reappear later in
+  the same session (`items` and `pool` stay disjoint and `pool` only shrinks).
+  After each reroll `app.js` fires a fire-and-forget `POST /api/precache`
+  with the current front `BACKUP_POOL_SIZE` pool ids to top the backup window
+  back up; the backend's `precache_ids` (unlike `precache`, which needs full
+  `ListItem`s) resolves each id through `ensure_image` directly, skipping ones
+  already cached — no session state is tracked, it just warms the ids it's given.
+
+- **Countdown beep.** `restartTicker()`'s per-second interval calls `playBeep()`
+  for the final `BEEP_WINDOW` (5) seconds of an image's timer — a short sine
+  tone synthesized with Web Audio (`playBeep`; no asset file, `AudioContext`
+  created lazily on first use so it's built after the "Start practice" click
+  satisfies the browser's autoplay-gesture requirement). Only the per-image
+  timer beeps, not the "Get ready" black-screen countdown between images. The
+  toolbar's speaker toggle (`data-action="audio"`) follows the same
+  read/set-to-`localStorage` pattern as dock/compact (`tsh:audio`, default on).
 
 - **The countdown is gated on the image.** `renderCurrent()` blanks the stage
   (`#stage.loading`, `#stage-img` → `opacity:0`, with a delayed spinner) and

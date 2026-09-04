@@ -371,10 +371,22 @@ def test_image_endpoint_downloads_on_demand(client, conn):
 
 
 @respx.mock
-def test_create_session_precaches_only_the_shown_images(client, conn):
+def test_create_session_precaches_shown_and_backup_pool_images(conn, tmp_path):
     respx.mock.get(url__startswith="https://img.example/").mock(
         return_value=httpx.Response(200, content=b"x", headers={"Content-Type": "image/png"})
     )
+    ids = "abcdefg"  # 7 images, so the reroll pool (5) exceeds BACKUP_POOL_SIZE (3)
+    provider = FakeProvider([meta(c) for c in ids])
+
+    def resolver(url):
+        if provider.matches(url):
+            return provider
+        raise UnknownSourceError(url)
+
+    app = create_app(
+        conn=conn, cache=ImageCache(conn, tmp_path / "cache"), resolver=resolver
+    )
+    client = TestClient(app, base_url="http://localhost")
     list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
 
     session = client.post(
@@ -382,11 +394,32 @@ def test_create_session_precaches_only_the_shown_images(client, conn):
     ).json()
 
     shown = {i["source_id"] for i in session["items"]}
-    pooled = {i["source_id"] for i in session["reroll_pool"]}
-    cached = {sid for sid in ("a", "b", "c") if db_module.get_cache_entry(conn, sid)}
-    assert cached == shown
-    for sid in pooled:
-        assert db_module.get_cache_entry(conn, sid) is None
+    pool_ids = [i["source_id"] for i in session["reroll_pool"]]
+    assert len(pool_ids) == 5
+    backup, rest = set(pool_ids[:3]), set(pool_ids[3:])
+
+    cached = {sid for sid in ids if db_module.get_cache_entry(conn, sid)}
+    assert cached == shown | backup
+    assert rest.isdisjoint(cached)
+
+
+@respx.mock
+def test_precache_endpoint_downloads_named_ids(client, conn):
+    respx.mock.get(url__startswith="https://img.example/").mock(
+        return_value=httpx.Response(200, content=b"x", headers={"Content-Type": "image/png"})
+    )
+    client.post("/api/lists", json={"url": GALLERY_URL})
+    assert db_module.get_cache_entry(conn, "c") is None
+
+    res = client.post("/api/precache", json={"source_ids": ["c"]})
+
+    assert res.status_code == 200
+    assert db_module.get_cache_entry(conn, "c") is not None
+
+
+def test_precache_endpoint_ignores_unknown_ids(client):
+    res = client.post("/api/precache", json={"source_ids": ["nope"]})
+    assert res.status_code == 200
 
 
 class RotatingProvider:
