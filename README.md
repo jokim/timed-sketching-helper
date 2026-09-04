@@ -12,6 +12,8 @@ Everything runs on your machine, and only talks with DeviantArt.
 
 ![Timed session](docs/screenshot-session.png)
 
+![Timed session, full toolbar](docs/screenshot-session-full.png)
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/).
