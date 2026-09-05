@@ -193,18 +193,35 @@ Key design points, each spanning several files:
 - **`db.py` threads `account_id` through every query.** `current_account()` is
   hard-coded to `1`; it is the single seam where real multi-user auth would plug in.
 
+- **DeviantArt login is isolated per browser via a session cookie — the
+  server never shares one browser's DeviantArt account with another.**
+  `main.create_app` installs a `_bind_session` middleware that mints an
+  opaque `tsh_session` cookie (httpOnly, `SameSite=Lax`, ~400-day `Max-Age`,
+  `secrets.token_urlsafe(32)`) on a browser's first request and stores it for
+  the rest of that request — including anything scheduled on
+  `BackgroundTasks`, since Starlette runs those inside the same request's
+  async context — in the `_session_id_ctx` `ContextVar`, read back via
+  `_current_session_id()`. `deviantart_oauth` (the DB table, and every method
+  on `DeviantArtOAuth`) is keyed by that `session_id`, not by
+  `db.current_account()` — the DeviantArt `client_secret` still never leaves
+  the server, but which browser's tokens a request can see is now scoped to
+  that browser's own cookie instead of one global slot. (List caching,
+  `recent`, and prefs are unrelated to login and stay keyed by the shared
+  `current_account()`, unchanged.)
+
 - **DeviantArt user login lives in `sources/deviantart_oauth.py` + the
   `/auth/deviantart/*` routes.** Authorization Code + PKCE grant.
   `/login` sets short-lived `state`/`verifier` cookies and 302s to DeviantArt;
   `/callback` checks the state, exchanges the code, calls `/user/whoami` for the
-  display name, stores tokens in `deviantart_oauth`, and redirects to
-  `/?da_auth=connected|failed` (the front end turns that into a start-screen
-  message). `create_app` closes a `_user_token` callable over
-  `DeviantArtOAuth.access_token` and passes it into `_default_resolver` →
-  `DeviantArtProvider`, whose `_get_token` tries the user token first and falls
-  back to client-credentials. Token refresh rotates the refresh token; a rejected
-  refresh token is deleted so the UI re-prompts for login. `_get_token(force=True)`
-  (after a 401) bypasses both caches.
+  display name, stores tokens in `deviantart_oauth` under the caller's
+  `session_id`, and redirects to `/?da_auth=connected|failed` (the front end
+  turns that into a start-screen message). `create_app` closes a `_user_token`
+  callable over `DeviantArtOAuth.access_token(_current_session_id(), ...)` and
+  passes it into `_default_resolver` → `DeviantArtProvider`, whose
+  `_get_token` tries the user token first and falls back to client-credentials.
+  Token refresh rotates the refresh token; a rejected refresh token is deleted
+  so the UI re-prompts for login. `_get_token(force=True)` (after a 401)
+  bypasses both caches.
 
 - **`create_app(*, conn=None, cache=None, resolver=None, cfg=None, trusted_hosts=None)`**
   is a factory with injectable dependencies — tests pass an in-memory SQLite

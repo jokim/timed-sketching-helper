@@ -70,14 +70,14 @@ async def test_exchange_persists_tokens_and_username(conn):
         return_value=httpx.Response(200, json={"username": "ninjatron"})
     )
 
-    await _oauth(conn).exchange(1, "the-code", "the-verifier")
+    await _oauth(conn).exchange("sess-1", "the-code", "the-verifier")
 
     assert token.called and whoami.called
     body = token.calls[0].request.content
     assert b"grant_type=authorization_code" in body
     assert b"code=the-code" in body
     assert b"code_verifier=the-verifier" in body
-    row = db_module.get_oauth(conn, 1)
+    row = db_module.get_oauth(conn, "sess-1")
     assert row["access_token"] == "acc-1"
     assert row["refresh_token"] == "ref-1"
     assert row["username"] == "ninjatron"
@@ -92,18 +92,18 @@ async def test_exchange_failure_raises_auth_error(conn):
     )
 
     with pytest.raises(DeviantArtAuthError, match="invalid_grant"):
-        await _oauth(conn).exchange(1, "the-code", "the-verifier")
-    assert db_module.get_oauth(conn, 1) is None
+        await _oauth(conn).exchange("sess-1", "the-code", "the-verifier")
+    assert db_module.get_oauth(conn, "sess-1") is None
 
 
 async def test_access_token_returns_none_when_not_connected(conn):
-    assert await _oauth(conn).access_token(1) is None
+    assert await _oauth(conn).access_token("sess-1") is None
 
 
 async def test_access_token_returns_stored_token_when_fresh(conn):
     db_module.save_oauth(
         conn,
-        1,
+        "sess-1",
         access_token="acc-fresh",
         refresh_token="ref-1",
         expires_at=_iso(datetime.now(timezone.utc) + timedelta(hours=1)),
@@ -111,14 +111,14 @@ async def test_access_token_returns_stored_token_when_fresh(conn):
         username="ninjatron",
     )
 
-    assert await _oauth(conn).access_token(1) == "acc-fresh"
+    assert await _oauth(conn).access_token("sess-1") == "acc-fresh"
 
 
 @respx.mock
 async def test_access_token_refreshes_when_expired_and_rotates_refresh_token(conn):
     db_module.save_oauth(
         conn,
-        1,
+        "sess-1",
         access_token="acc-old",
         refresh_token="ref-old",
         expires_at=_iso(datetime.now(timezone.utc) - timedelta(minutes=5)),
@@ -136,12 +136,12 @@ async def test_access_token_refreshes_when_expired_and_rotates_refresh_token(con
         )
     )
 
-    result = await _oauth(conn).access_token(1)
+    result = await _oauth(conn).access_token("sess-1")
 
     assert result == "acc-new"
     assert b"grant_type=refresh_token" in token.calls[0].request.content
     assert b"refresh_token=ref-old" in token.calls[0].request.content
-    row = db_module.get_oauth(conn, 1)
+    row = db_module.get_oauth(conn, "sess-1")
     assert row["access_token"] == "acc-new"
     assert row["refresh_token"] == "ref-new"
 
@@ -150,7 +150,7 @@ async def test_access_token_refreshes_when_expired_and_rotates_refresh_token(con
 async def test_access_token_force_refreshes_even_when_fresh(conn):
     db_module.save_oauth(
         conn,
-        1,
+        "sess-1",
         access_token="acc-old",
         refresh_token="ref-old",
         expires_at=_iso(datetime.now(timezone.utc) + timedelta(hours=1)),
@@ -163,14 +163,14 @@ async def test_access_token_force_refreshes_even_when_fresh(conn):
         )
     )
 
-    assert await _oauth(conn).access_token(1, force=True) == "acc-new"
+    assert await _oauth(conn).access_token("sess-1", force=True) == "acc-new"
 
 
 @respx.mock
 async def test_refresh_failure_disconnects_and_raises(conn):
     db_module.save_oauth(
         conn,
-        1,
+        "sess-1",
         access_token="acc-old",
         refresh_token="ref-old",
         expires_at=_iso(datetime.now(timezone.utc) - timedelta(minutes=5)),
@@ -184,24 +184,24 @@ async def test_refresh_failure_disconnects_and_raises(conn):
     )
 
     with pytest.raises(DeviantArtAuthError):
-        await _oauth(conn).access_token(1)
-    assert db_module.get_oauth(conn, 1) is None
+        await _oauth(conn).access_token("sess-1")
+    assert db_module.get_oauth(conn, "sess-1") is None
 
 
 def test_status_and_logout(conn):
     o = _oauth(conn)
-    assert o.status(1) == {"connected": False, "username": None}
+    assert o.status("sess-1") == {"connected": False, "username": None}
 
     db_module.save_oauth(
         conn,
-        1,
+        "sess-1",
         access_token="acc",
         refresh_token="ref",
         expires_at=_iso(datetime.now(timezone.utc) + timedelta(hours=1)),
         scope="browse",
         username="ninjatron",
     )
-    assert o.status(1) == {"connected": True, "username": "ninjatron"}
+    assert o.status("sess-1") == {"connected": True, "username": "ninjatron"}
 
-    o.logout(1)
-    assert o.status(1) == {"connected": False, "username": None}
+    o.logout("sess-1")
+    assert o.status("sess-1") == {"connected": False, "username": None}

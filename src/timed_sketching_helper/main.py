@@ -8,6 +8,7 @@ import json
 import logging
 import secrets
 import sqlite3
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -44,6 +45,23 @@ logger = logging.getLogger(__name__)
 
 OAUTH_STATE_COOKIE = "da_oauth_state"
 OAUTH_VERIFIER_COOKIE = "da_oauth_verifier"
+
+# Identifies a browser to this server so DeviantArt login is per-browser, not
+# a single server-wide slot every visitor shares. Holds no DeviantArt data
+# itself — it's an opaque local id that only this server can look anything up
+# with (see `_bind_session` / `_current_session_id`).
+SESSION_COOKIE = "tsh_session"
+SESSION_COOKIE_MAX_AGE = 400 * 24 * 3600  # ~400 days, the browser-enforced cap
+
+_session_id_ctx: ContextVar[str | None] = ContextVar("session_id", default=None)
+
+
+def _current_session_id() -> str:
+    session_id = _session_id_ctx.get()
+    if session_id is None:
+        # Only reachable outside a request handled by `_bind_session`.
+        raise RuntimeError("No session bound to the current request.")
+    return session_id
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -146,7 +164,7 @@ def create_app(
     )
 
     async def _user_token(*, force: bool = False) -> str | None:
-        return await oauth.access_token(db.current_account(), force=force)
+        return await oauth.access_token(_current_session_id(), force=force)
 
     deviantart_provider = DeviantArtProvider(
         cfg.deviantart_client_id,
@@ -250,6 +268,30 @@ def create_app(
         ):
             return _json_error(403, "Cross-site request blocked.")
         return await call_next(request)
+
+    @app.middleware("http")
+    async def _bind_session(request: Request, call_next):  # noqa: ANN001
+        """Give every browser its own opaque session id (minting one on first
+        visit), so DeviantArt login state can never leak between browsers —
+        see SESSION_COOKIE above."""
+        session_id = request.cookies.get(SESSION_COOKIE)
+        is_new = session_id is None
+        if is_new:
+            session_id = secrets.token_urlsafe(32)
+        token = _session_id_ctx.set(session_id)
+        try:
+            response = await call_next(request)
+        finally:
+            _session_id_ctx.reset(token)
+        if is_new:
+            response.set_cookie(
+                SESSION_COOKIE,
+                session_id,
+                max_age=SESSION_COOKIE_MAX_AGE,
+                httponly=True,
+                samesite="lax",
+            )
+        return response
 
     @app.exception_handler(UnknownSourceError)
     @app.exception_handler(ValueError)
@@ -398,7 +440,7 @@ def create_app(
 
     @app.get("/auth/deviantart/status")
     async def deviantart_status() -> dict:
-        return oauth.status(db.current_account())
+        return oauth.status(_current_session_id())
 
     @app.get("/auth/deviantart/login")
     async def deviantart_login() -> RedirectResponse:
@@ -427,7 +469,7 @@ def create_app(
         if not verifier:
             raise HTTPException(400, "OAuth session expired. Try connecting again.")
         try:
-            await oauth.exchange(db.current_account(), code, verifier)
+            await oauth.exchange(_current_session_id(), code, verifier)
         except DeviantArtAuthError:
             target = "/?da_auth=failed"
         else:
@@ -439,12 +481,12 @@ def create_app(
 
     @app.post("/auth/deviantart/logout")
     async def deviantart_logout() -> Response:
-        oauth.logout(db.current_account())
+        oauth.logout(_current_session_id())
         return Response(status_code=204)
 
     @app.get("/api/deviantart/collections")
     async def deviantart_collections() -> dict:
-        status = oauth.status(db.current_account())
+        status = oauth.status(_current_session_id())
         if not status["connected"]:
             raise HTTPException(401, "Connect DeviantArt to list collections.")
         collections = await deviantart_provider.list_collections(status["username"])

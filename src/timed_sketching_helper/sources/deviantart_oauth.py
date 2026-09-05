@@ -5,7 +5,10 @@ The client-credentials grant the browse client uses is treated as anonymous by
 DeviantArt, and anonymous ``content.src`` URLs carry a ``blur`` claim for mature
 content. A token minted for a real user whose account has mature content enabled
 does not. This module runs the login dance and keeps the resulting tokens
-(access + rotating refresh) in ``deviantart_oauth``.
+(access + rotating refresh) in ``deviantart_oauth``, keyed by the caller-supplied
+``session_id`` — a per-browser id (see ``main.py``'s session-cookie middleware),
+not a real account. The DeviantArt ``client_secret`` never leaves this module;
+only the per-browser tokens it produces are looked up per session.
 """
 
 from __future__ import annotations
@@ -79,7 +82,7 @@ class DeviantArtOAuth:
         return f"{AUTHORIZE_URL}?{query}"
 
     async def exchange(
-        self, account_id: int, code: str, code_verifier: str
+        self, session_id: str, code: str, code_verifier: str
     ) -> None:
         async with self._http() as client:
             payload = await self._token_request(
@@ -92,14 +95,14 @@ class DeviantArtOAuth:
                 },
             )
             username = await self._whoami(client, payload["access_token"])
-        self._store(account_id, payload, username)
+        self._store(session_id, payload, username)
 
     # -- token access -----------------------------------------------------
 
     async def access_token(
-        self, account_id: int, *, force: bool = False
+        self, session_id: str, *, force: bool = False
     ) -> str | None:
-        row = db.get_oauth(self._conn, account_id)
+        row = db.get_oauth(self._conn, session_id)
         if row is None:
             return None
         if not force and not _is_expired(row["expires_at"]):
@@ -117,21 +120,21 @@ class DeviantArtOAuth:
             except DeviantArtAuthError:
                 # A dead refresh token is unrecoverable — drop it so the UI
                 # prompts for a fresh login instead of failing every request.
-                db.delete_oauth(self._conn, account_id)
+                db.delete_oauth(self._conn, session_id)
                 raise
-        self._store(account_id, payload, row["username"])
+        self._store(session_id, payload, row["username"])
         return payload["access_token"]
 
     # -- status ---------------------------------------------------------
 
-    def status(self, account_id: int) -> dict:
-        row = db.get_oauth(self._conn, account_id)
+    def status(self, session_id: str) -> dict:
+        row = db.get_oauth(self._conn, session_id)
         if row is None:
             return {"connected": False, "username": None}
         return {"connected": True, "username": row["username"]}
 
-    def logout(self, account_id: int) -> None:
-        db.delete_oauth(self._conn, account_id)
+    def logout(self, session_id: str) -> None:
+        db.delete_oauth(self._conn, session_id)
 
     # -- internals ------------------------------------------------------
 
@@ -170,11 +173,11 @@ class DeviantArtOAuth:
             return None
         return response.json().get("username")
 
-    def _store(self, account_id: int, payload: dict, username: str | None) -> None:
+    def _store(self, session_id: str, payload: dict, username: str | None) -> None:
         expires_in = int(payload.get("expires_in", 3600))
         db.save_oauth(
             self._conn,
-            account_id,
+            session_id,
             access_token=payload["access_token"],
             refresh_token=payload["refresh_token"],
             expires_at=(_now() + timedelta(seconds=expires_in)).isoformat(),

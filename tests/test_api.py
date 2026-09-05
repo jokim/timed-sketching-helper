@@ -43,6 +43,12 @@ class FakeProvider:
         return images
 
 
+def _session_id(client):
+    """Trigger the session-cookie middleware and return the id it minted."""
+    client.get("/auth/deviantart/status")
+    return client.cookies.get("tsh_session")
+
+
 def meta(source_id):
     return ImageMeta(
         source_id=source_id,
@@ -162,7 +168,7 @@ def test_callback_exchanges_code_and_connects(auth_client):
 def test_logout_disconnects(auth_client, conn):
     db_module.save_oauth(
         conn,
-        1,
+        _session_id(auth_client),
         access_token="a",
         refresh_token="r",
         expires_at="2999-01-01T00:00:00+00:00",
@@ -182,11 +188,44 @@ def test_collections_requires_connection(auth_client):
     assert res.status_code == 401
 
 
+def test_deviantart_login_is_isolated_per_browser(conn, tmp_path):
+    cfg = Config(
+        deviantart_client_id="cid",
+        deviantart_client_secret="csecret",
+        deviantart_redirect_uri=REDIRECT_URI,
+        mature_content=True,
+        data_dir=tmp_path,
+        list_ttl_hours=24,
+    )
+    app = create_app(conn=conn, cache=ImageCache(conn, tmp_path / "cache"), cfg=cfg)
+    browser_a = TestClient(app, base_url="http://localhost")
+    browser_b = TestClient(app, base_url="http://localhost")
+
+    db_module.save_oauth(
+        conn,
+        _session_id(browser_a),
+        access_token="a",
+        refresh_token="r",
+        expires_at="2999-01-01T00:00:00+00:00",
+        scope="",
+        username="ninjatron",
+    )
+
+    assert browser_a.get("/auth/deviantart/status").json() == {
+        "connected": True,
+        "username": "ninjatron",
+    }
+    assert browser_b.get("/auth/deviantart/status").json() == {
+        "connected": False,
+        "username": None,
+    }
+
+
 @respx.mock
 def test_collections_lists_connected_users_favourites_folders(auth_client, conn):
     db_module.save_oauth(
         conn,
-        1,
+        _session_id(auth_client),
         access_token="a",
         refresh_token="r",
         expires_at="2999-01-01T00:00:00+00:00",
@@ -567,7 +606,7 @@ def test_trusted_hosts_wildcard_disables_the_check(conn, tmp_path):
 def test_logout_blocked_from_cross_site_request(auth_client, conn):
     db_module.save_oauth(
         conn,
-        1,
+        _session_id(auth_client),
         access_token="a",
         refresh_token="r",
         expires_at="2999-01-01T00:00:00+00:00",
@@ -586,7 +625,7 @@ def test_logout_blocked_from_cross_site_request(auth_client, conn):
 def test_logout_blocked_when_origin_is_foreign(auth_client, conn):
     db_module.save_oauth(
         conn,
-        1,
+        _session_id(auth_client),
         access_token="a",
         refresh_token="r",
         expires_at="2999-01-01T00:00:00+00:00",
@@ -604,7 +643,7 @@ def test_logout_blocked_when_origin_is_foreign(auth_client, conn):
 def test_logout_allowed_from_same_origin(auth_client, conn):
     db_module.save_oauth(
         conn,
-        1,
+        _session_id(auth_client),
         access_token="a",
         refresh_token="r",
         expires_at="2999-01-01T00:00:00+00:00",

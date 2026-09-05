@@ -773,6 +773,12 @@ function resetPauseUI() {
 
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 8;
+// Wheel/trackpad zoom speed: scales the per-event zoom factor with the
+// event's deltaY magnitude (rather than a flat factor) so a touchpad's many
+// small-delta events per gesture zoom as slowly as a mouse wheel's few
+// large-delta ones. Lower = slower zoom. The exp() argument is clamped so a
+// single large delta spike can't jump too far in one event.
+const ZOOM_WHEEL_SENSITIVITY = 0.0015;
 const zoomView = { z: 1, tx: 0, ty: 0, dragging: false, sx: 0, sy: 0 };
 
 function clampPan() {
@@ -791,7 +797,7 @@ function applyZoom() {
   }
   $("#stage-img").style.transform =
     `translate(${zoomView.tx}px, ${zoomView.ty}px) scale(${zoomView.z})`;
-  $("#zoom").hidden = zoomView.z <= 1.001;
+  $("#zoom-out").disabled = zoomView.z <= 1.001;
   $("#stage").classList.toggle("pannable", zoomView.z > 1.001);
 }
 
@@ -826,7 +832,8 @@ function initZoomControls() {
     "wheel",
     (event) => {
       event.preventDefault();
-      zoomBy(event.deltaY < 0 ? 1.18 : 1 / 1.18, event.clientX, event.clientY);
+      const magnitude = Math.max(-0.4, Math.min(0.4, -event.deltaY * ZOOM_WHEEL_SENSITIVITY));
+      zoomBy(Math.exp(magnitude), event.clientX, event.clientY);
     },
     { passive: false },
   );
@@ -1252,9 +1259,11 @@ $("#new-btn").addEventListener("click", () => {
 // ---- Pointer-idle watcher ----------------------------------------------
 //
 // Stamps document.body.dataset.activity while the pointer (or keyboard) is
-// active and clears it after 2s of stillness. Only the compact toolbar reacts
-// to it (in styles.css): it fades away when idle so the reference image is
-// unobstructed, and snaps back the instant the mouse moves.
+// active and clears it after 2s of stillness. The compact toolbar and the
+// zoom buttons react to it (in styles.css): they fade away when idle so the
+// reference image is unobstructed, and snap back the instant the mouse
+// moves — including stylus hover on a drawing tablet, so a pen-only user
+// can bring the zoom controls back without reaching for a mouse.
 
 const IDLE_MS = 2000;
 

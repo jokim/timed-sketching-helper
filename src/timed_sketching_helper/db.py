@@ -1,8 +1,11 @@
 """SQLite persistence: schema, connection helper, and query functions.
 
-Every query takes an ``account_id``. v1 always passes ``DEFAULT_ACCOUNT_ID``
+Most queries take an ``account_id``. v1 always passes ``DEFAULT_ACCOUNT_ID``
 (see ``current_account``); that function is the single seam for real
-multi-user support later.
+multi-user support later. DeviantArt OAuth tokens are the exception: they're
+keyed by a per-browser ``session_id`` instead (see
+``sources/deviantart_oauth.py``), since sharing one account's login across
+every browser that hits the server is exactly the bug that keying broke.
 """
 
 from __future__ import annotations
@@ -60,7 +63,7 @@ CREATE TABLE IF NOT EXISTS preferences (
 );
 
 CREATE TABLE IF NOT EXISTS deviantart_oauth (
-    account_id    INTEGER PRIMARY KEY REFERENCES accounts(id),
+    session_id    TEXT PRIMARY KEY,
     access_token  TEXT NOT NULL,
     refresh_token TEXT NOT NULL,
     expires_at    TEXT NOT NULL,
@@ -90,7 +93,22 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_deviantart_oauth_to_session_keying(conn: sqlite3.Connection) -> None:
+    """``deviantart_oauth`` used to be keyed by the single global account id,
+    so every browser shared one DeviantArt login. It's now keyed by a
+    per-browser session id instead. An old-schema table just gets dropped —
+    the only cost is that whoever was connected has to log in again."""
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(deviantart_oauth)").fetchall()
+    }
+    if columns and "session_id" not in columns:
+        conn.execute("DROP TABLE deviantart_oauth")
+        conn.commit()
+
+
 def init_db(conn: sqlite3.Connection) -> None:
+    _migrate_deviantart_oauth_to_session_keying(conn)
     conn.executescript(SCHEMA)
     conn.execute(
         "INSERT OR IGNORE INTO accounts (id, name, created_at) VALUES (?, ?, ?)",
@@ -265,16 +283,16 @@ def clear_cache_entries(
 
 
 def get_oauth(
-    conn: sqlite3.Connection, account_id: int
+    conn: sqlite3.Connection, session_id: str
 ) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT * FROM deviantart_oauth WHERE account_id = ?", (account_id,)
+        "SELECT * FROM deviantart_oauth WHERE session_id = ?", (session_id,)
     ).fetchone()
 
 
 def save_oauth(
     conn: sqlite3.Connection,
-    account_id: int,
+    session_id: str,
     *,
     access_token: str,
     refresh_token: str,
@@ -284,16 +302,16 @@ def save_oauth(
 ) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO deviantart_oauth"
-        " (account_id, access_token, refresh_token, expires_at, scope, username, updated_at)"
+        " (session_id, access_token, refresh_token, expires_at, scope, username, updated_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (account_id, access_token, refresh_token, expires_at, scope, username, _now()),
+        (session_id, access_token, refresh_token, expires_at, scope, username, _now()),
     )
     conn.commit()
 
 
-def delete_oauth(conn: sqlite3.Connection, account_id: int) -> None:
+def delete_oauth(conn: sqlite3.Connection, session_id: str) -> None:
     conn.execute(
-        "DELETE FROM deviantart_oauth WHERE account_id = ?", (account_id,)
+        "DELETE FROM deviantart_oauth WHERE session_id = ?", (session_id,)
     )
     conn.commit()
 

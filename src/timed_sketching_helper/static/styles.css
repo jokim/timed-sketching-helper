@@ -653,6 +653,18 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  opacity: 0.01;
+  transition: opacity 0.5s ease-out;
+}
+/* Pointer active in the last 2s (body[data-activity], set by app.js), or the
+   zoom controls themselves hovered/focused: bring them fully back, quickly.
+   Same mechanism as the minimized toolbar below, so a stylus hovering the
+   drawing tablet — not just a mouse — wakes the buttons back up. */
+body[data-activity] #zoom,
+#zoom:hover,
+#zoom:focus-within {
+  opacity: 1;
+  transition: opacity 0.15s ease;
 }
 #zoom button {
   width: 38px;
@@ -670,6 +682,13 @@ kbd {
   transition: border-color 0.12s, color 0.12s;
 }
 #zoom button:hover { border-color: var(--accent); color: var(--accent); }
+#zoom button:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+  border-color: var(--border);
+  color: var(--fg);
+}
 
 #time-bar {
   position: absolute;
