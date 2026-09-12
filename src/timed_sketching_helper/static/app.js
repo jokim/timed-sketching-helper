@@ -293,12 +293,18 @@ function savedRow(entry) {
   return li;
 }
 
+function setSavedCount(group, count) {
+  const el = group.querySelector(".saved-title .saved-count");
+  if (el) el.textContent = ` (${count})`;
+}
+
 function fillSavedGroup(id, entries) {
   const group = document.getElementById(id);
   const ul = group.querySelector(".saved-list");
   ul.innerHTML = "";
   for (const entry of entries) ul.appendChild(savedRow(entry));
   group.hidden = entries.length === 0;
+  setSavedCount(group, entries.length);
 }
 
 function updateSavedVisibility() {
@@ -409,6 +415,7 @@ function renderCollections(collections) {
   for (const entry of collections) ul.appendChild(collectionRow(entry));
   setCollectionsStatus("");
   group.hidden = false;
+  setSavedCount(group, collections.length);
   updateSavedVisibility();
 }
 
@@ -418,6 +425,7 @@ function clearCollections() {
   group.hidden = true;
   group.querySelector(".saved-list").innerHTML = "";
   setCollectionsStatus("");
+  setSavedCount(group, 0);
   updateSavedVisibility();
 }
 

@@ -49,3 +49,23 @@ def test_list_ttl_hours_falls_back_when_not_numeric(monkeypatch):
 def test_list_ttl_hours_is_floored_at_1(monkeypatch):
     monkeypatch.setenv("LIST_TTL_HOURS", "0")
     assert load_config().list_ttl_hours == 1
+
+
+def test_image_ttl_hours_defaults_to_30_days(monkeypatch):
+    monkeypatch.delenv("IMAGE_TTL_HOURS", raising=False)
+    assert load_config().image_ttl_hours == 24 * 30
+
+
+def test_image_ttl_hours_reads_env(monkeypatch):
+    monkeypatch.setenv("IMAGE_TTL_HOURS", "6")
+    assert load_config().image_ttl_hours == 6
+
+
+def test_image_ttl_hours_falls_back_when_not_numeric(monkeypatch):
+    monkeypatch.setenv("IMAGE_TTL_HOURS", "forever")
+    assert load_config().image_ttl_hours == 24 * 30
+
+
+def test_image_ttl_hours_is_floored_at_1(monkeypatch):
+    monkeypatch.setenv("IMAGE_TTL_HOURS", "0")
+    assert load_config().image_ttl_hours == 1

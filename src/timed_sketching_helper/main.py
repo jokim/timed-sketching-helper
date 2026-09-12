@@ -154,7 +154,7 @@ def create_app(
     cfg = cfg or get_config()
     conn = conn or db.connect(cfg.db_path)
     db.init_db(conn)
-    cache = cache or ImageCache(conn, cfg.cache_dir)
+    cache = cache or ImageCache(conn, cfg.cache_dir, ttl_hours=cfg.image_ttl_hours)
 
     oauth = DeviantArtOAuth(
         conn,

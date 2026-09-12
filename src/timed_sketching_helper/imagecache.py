@@ -16,6 +16,7 @@ from pathlib import Path
 import httpx
 
 from timed_sketching_helper import db
+from timed_sketching_helper.config import DEFAULT_IMAGE_TTL_HOURS
 from timed_sketching_helper.models import ListItem
 
 USER_AGENT = (
@@ -29,14 +30,25 @@ class CacheFetchError(RuntimeError):
 
 
 class ImageCache:
-    def __init__(self, conn: sqlite3.Connection, cache_dir: Path | str) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        cache_dir: Path | str,
+        *,
+        ttl_hours: int = DEFAULT_IMAGE_TTL_HOURS,
+    ) -> None:
         self._conn = conn
         self._dir = Path(cache_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._ttl_hours = ttl_hours
 
     def _path(self, source_id: str) -> Path:
         digest = hashlib.sha256(source_id.encode()).hexdigest()
         return self._dir / digest
+
+    def _evict(self, source_id: str, path: Path) -> None:
+        path.unlink(missing_ok=True)
+        db.clear_cache_entry(self._conn, source_id)
 
     def open_cached(self, source_id: str) -> tuple[Path, str] | None:
         entry = db.get_cache_entry(self._conn, source_id)
@@ -45,6 +57,9 @@ class ImageCache:
         path = self._path(source_id)
         if not path.exists():
             db.clear_cache_entry(self._conn, source_id)
+            return None
+        if not db.is_fresh(entry["cached_at"], self._ttl_hours):
+            self._evict(source_id, path)
             return None
         return path, entry["content_type"]
 

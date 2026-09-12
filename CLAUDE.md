@@ -154,7 +154,11 @@ Key design points, each spanning several files:
   reroll pool, so an instant reroll has a warm image ready; `static/app.js`
   `preloadAhead()` separately warms the next `PRELOAD_AHEAD` (3) images in the
   browser cache and retains the `Image` objects (in `preloaded`) so the bytes
-  stay decoded.
+  stay decoded. Once downloaded, bytes stay cached for `IMAGE_TTL_HOURS`
+  (default 720 = 30 days, much longer than a list's `LIST_TTL_HOURS` since
+  artwork itself rarely changes) — `ImageCache.open_cached` checks the
+  `image_cache.cached_at` timestamp via `db.is_fresh` and evicts (deletes the
+  file + row) a stale entry, so the next `ensure()` call re-downloads it.
 
 - **Reroll swaps in the pre-downloaded backup pool, never a used image.**
   `POST /api/sessions` returns `reroll_pool` already shuffled (it's a slice of

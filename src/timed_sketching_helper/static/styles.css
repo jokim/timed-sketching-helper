@@ -373,6 +373,8 @@ kbd {
 .saved-title::before {
   content: "▸";
   display: inline-block;
+  font-size: 22px;
+  line-height: 1;
   color: var(--muted);
   transition: transform 0.12s;
 }
@@ -382,6 +384,14 @@ kbd {
   outline-offset: 2px;
   border-radius: 6px;
 }
+
+.saved-count {
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.saved-group[open] > .saved-title .saved-count { display: none; }
 
 .saved-title button {
   flex: none;
@@ -739,6 +749,18 @@ body[data-activity] #zoom,
   text-align: center;
   background: linear-gradient(to top, rgba(8, 9, 10, 0.8), rgba(8, 9, 10, 0.32) 55%, transparent);
   pointer-events: none;
+  opacity: 0.01;
+  transition: opacity 0.5s ease-out;
+}
+/* Same wake mechanism as #zoom / the minimized toolbar: recent pointer
+   activity (body[data-activity], set by app.js), or the link itself
+   hovered/focused, brings it fully back so it doesn't sit over the
+   drawing while idle. */
+body[data-activity] #caption,
+#caption:hover,
+#caption:focus-within {
+  opacity: 1;
+  transition: opacity 0.15s ease;
 }
 #page-link {
   display: inline-block;

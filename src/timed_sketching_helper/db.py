@@ -11,7 +11,7 @@ every browser that hits the server is exactly the bug that keying broke.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from timed_sketching_helper.models import ImageList, ImageMeta, ListItem, SourceRef
@@ -78,6 +78,17 @@ DEFAULT_PREFERENCES = {"default_count": "20", "default_duration": "90"}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def is_fresh(timestamp: str, ttl_hours: int) -> bool:
+    """Whether an ISO timestamp (as written by ``_now()``) is within ``ttl_hours``."""
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - parsed < timedelta(hours=ttl_hours)
 
 
 def current_account() -> int:

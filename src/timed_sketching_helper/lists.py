@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
 
 from timed_sketching_helper import db
 from timed_sketching_helper.models import ImageList, ImageMeta
@@ -13,16 +12,6 @@ from timed_sketching_helper.sources.base import (
     SourceProvider,
     resolve,
 )
-
-
-def _is_fresh(fetched_at: str, ttl_hours: int) -> bool:
-    try:
-        fetched = datetime.fromisoformat(fetched_at)
-    except ValueError:
-        return False
-    if fetched.tzinfo is None:
-        fetched = fetched.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - fetched < timedelta(hours=ttl_hours)
 
 
 def _dedupe(images: list[ImageMeta]) -> list[ImageMeta]:
@@ -69,7 +58,7 @@ async def get_list(
     if (
         meta is not None
         and not force_refresh
-        and _is_fresh(meta["fetched_at"], ttl_hours)
+        and db.is_fresh(meta["fetched_at"], ttl_hours)
     ):
         cached = db.load_list(conn, meta["id"])
         # An explicit max_images that's higher than the cached list means the

@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import httpx
 import pytest
 import respx
@@ -100,3 +102,54 @@ async def test_ensure_many_downloads_all_and_tolerates_failures(cache, conn):
     assert cache.open_cached("a") is not None
     assert cache.open_cached("b") is None
     assert cache.open_cached("c") is not None
+
+
+def _backdate(conn, source_id, hours):
+    stale = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    conn.execute(
+        "UPDATE image_cache SET cached_at = ? WHERE source_id = ?",
+        (stale, source_id),
+    )
+    conn.commit()
+
+
+@respx.mock
+async def test_open_cached_expires_stale_entry(conn, tmp_path):
+    cache = ImageCache(conn, tmp_path / "cache", ttl_hours=1)
+    respx.mock.get("https://img.example/a.png").mock(
+        return_value=httpx.Response(200, content=b"X", headers={"Content-Type": "image/png"})
+    )
+    path, _ = await cache.ensure("a", "https://img.example/a.png")
+    assert path.exists()
+
+    _backdate(conn, "a", hours=2)
+
+    assert cache.open_cached("a") is None
+    assert db_module.get_cache_entry(conn, "a") is None
+    assert not path.exists()
+
+
+@respx.mock
+async def test_ensure_redownloads_after_ttl_expiry(conn, tmp_path):
+    cache = ImageCache(conn, tmp_path / "cache", ttl_hours=1)
+    route = respx.mock.get("https://img.example/a.png").mock(
+        return_value=httpx.Response(200, content=b"X", headers={"Content-Type": "image/png"})
+    )
+    await cache.ensure("a", "https://img.example/a.png")
+    _backdate(conn, "a", hours=2)
+
+    await cache.ensure("a", "https://img.example/a.png")
+
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_open_cached_returns_entry_within_ttl(conn, tmp_path):
+    cache = ImageCache(conn, tmp_path / "cache", ttl_hours=720)
+    respx.mock.get("https://img.example/a.png").mock(
+        return_value=httpx.Response(200, content=b"X", headers={"Content-Type": "image/png"})
+    )
+    await cache.ensure("a", "https://img.example/a.png")
+    _backdate(conn, "a", hours=1)
+
+    assert cache.open_cached("a") is not None

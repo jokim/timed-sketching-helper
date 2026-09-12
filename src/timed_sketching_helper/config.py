@@ -33,6 +33,10 @@ DEFAULT_MAX_IMAGES = 300
 DEFAULT_MAX_REQUESTS = 100
 HARD_MAX_REQUESTS = 1000
 
+# Cached image *bytes* rarely go stale (the artwork itself doesn't change), so
+# they keep much longer than a fetched list's metadata — 30 days by default.
+DEFAULT_IMAGE_TTL_HOURS = 24 * 30
+
 
 def _as_max_images(value: str | None) -> int:
     try:
@@ -69,6 +73,7 @@ class Config:
     mature_content: bool
     data_dir: Path
     list_ttl_hours: int
+    image_ttl_hours: int = DEFAULT_IMAGE_TTL_HOURS
     max_images: int = DEFAULT_MAX_IMAGES
     max_requests: int = DEFAULT_MAX_REQUESTS
 
@@ -98,6 +103,9 @@ def load_config() -> Config:
         mature_content=_as_bool(os.environ.get("DA_MATURE_CONTENT"), default=True),
         data_dir=data_dir,
         list_ttl_hours=_as_positive_int(os.environ.get("LIST_TTL_HOURS"), 24),
+        image_ttl_hours=_as_positive_int(
+            os.environ.get("IMAGE_TTL_HOURS"), DEFAULT_IMAGE_TTL_HOURS
+        ),
         max_images=_as_max_images(os.environ.get("MAX_IMAGES")),
         max_requests=_as_max_requests(os.environ.get("MAX_REQUESTS")),
     )
