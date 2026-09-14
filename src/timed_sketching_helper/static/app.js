@@ -72,31 +72,26 @@ function setDock(pos) {
   }
 }
 
-// ---- Minimized toolbar (icon-only, floating over the image) -------------
+// ---- Settings modal -------------------------------------------------------
+// Holds toolbar position and the countdown-beep switch — everything besides
+// the playback controls themselves. Opening it pauses the session (whichever
+// of the two pause mechanisms currently applies) unless it was already
+// paused; closing it resumes only if opening Settings is what paused it, so
+// a session the user had already paused manually stays paused.
 
-const COMPACT_KEY = "tsh:compact";
+let settingsAutoPaused = false;
 
-function readCompact() {
-  try {
-    return localStorage.getItem(COMPACT_KEY) === "1";
-  } catch {
-    return false;
-  }
+function openSettings() {
+  const alreadyPaused = countdown.active ? countdown.paused : session.paused;
+  settingsAutoPaused = !alreadyPaused;
+  if (settingsAutoPaused) togglePause();
+  $("#settings-modal").hidden = false;
 }
 
-function setCompact(on) {
-  if (on) views.session.dataset.compact = "";
-  else delete views.session.dataset.compact;
-  try {
-    localStorage.setItem(COMPACT_KEY, on ? "1" : "0");
-  } catch {
-    /* private mode / blocked storage — still applies for this session */
-  }
-  const btn = $("#controls button[data-action=compact]");
-  if (btn) {
-    btn.setAttribute("aria-pressed", String(on));
-    btn.title = on ? "Expand toolbar" : "Minimize toolbar";
-  }
+function closeSettings() {
+  $("#settings-modal").hidden = true;
+  if (settingsAutoPaused) togglePause();
+  settingsAutoPaused = false;
 }
 
 // ---- Countdown beep -------------------------------------------------------
@@ -125,10 +120,8 @@ function setAudioEnabled(on) {
   } catch {
     /* private mode / blocked storage — still applies for this session */
   }
-  const btn = $("#controls button[data-action=audio]");
-  if (btn) {
-    btn.setAttribute("aria-pressed", String(!on));
-    btn.title = on ? "Mute countdown beep" : "Unmute countdown beep";
+  for (const b of document.querySelectorAll(".audio-choice button")) {
+    b.setAttribute("aria-pressed", String((b.dataset.audio === "on") === on));
   }
 }
 
@@ -254,6 +247,17 @@ function savedThumb(entry) {
   return box;
 }
 
+// The second line under a saved item's name: item type, then how many
+// images it holds (omitted when unknown — e.g. an entry saved before this
+// field existed), then the URL.
+function savedSubline(entry) {
+  const parts = [];
+  if (entry.kind) parts.push(entry.kind);
+  if (entry.count != null) parts.push(`${entry.count} image${entry.count === 1 ? "" : "s"}`);
+  parts.push(entry.url);
+  return parts.join(" · ");
+}
+
 function savedRow(entry) {
   const li = document.createElement("li");
   li.className = "saved-row";
@@ -268,7 +272,7 @@ function savedRow(entry) {
   name.textContent = displayTitle(entry);
   const sub = document.createElement("span");
   sub.className = "saved-url";
-  sub.textContent = entry.kind ? `${entry.kind} · ${entry.url}` : entry.url;
+  sub.textContent = savedSubline(entry);
   pick.append(name, sub);
 
   const favd = isFavorite(entry.url);
@@ -495,6 +499,7 @@ const state = {
   listTitle: null,
   listKind: null,
   listThumb: null,
+  listCount: null,
   duration: 90,
   count: 20,
 };
@@ -702,11 +707,13 @@ $("#start-form").addEventListener("submit", async (event) => {
     state.listTitle = list.title || url;
     state.listKind = list.kind || "";
     state.listThumb = list.thumb || "";
+    state.listCount = list.count ?? null;
     rememberRecent({
       url,
       title: state.listTitle,
       kind: state.listKind,
       thumb: state.listThumb,
+      count: state.listCount,
     });
     setStartStatus(`Fetched ${list.count} images. Preparing session…`);
     await api("/api/prefs", {
@@ -739,6 +746,9 @@ const session = {
 // loading underneath. `n` counts down from COUNTDOWN_SECONDS; the big Pause
 // button freezes it there until the user resumes.
 const COUNTDOWN_SECONDS = 5;
+// "Give me 10 more seconds!" during a between-images countdown: how long the
+// just-finished image gets shown again before the countdown resumes.
+const EXTRA_SECONDS = 10;
 const countdown = {
   active: false,
   paused: false,
@@ -1046,6 +1056,7 @@ function beginCountdown({ start = false } = {}) {
   label.hidden = !(start || countdown.final);
   label.textContent = start ? "Get ready" : "Final image";
   $("#countdown-prev").hidden = start || session.index === 0;
+  $("#countdown-extra").hidden = start;
   setCountdownPauseLabel();
   showCountdownNumber(countdown.n);
   veil.hidden = false;
@@ -1092,6 +1103,19 @@ function cancelCountdown() {
   const veil = $("#countdown-veil");
   veil.hidden = true;
   veil.classList.remove("paused");
+}
+
+// "Give me 10 more seconds!": bail out of a between-images countdown back to
+// the image that just finished (still on screen underneath the veil, since
+// the index hasn't advanced yet) and re-run its per-image timer for a short
+// fixed extension. When that runs out, the normal timer expiry path (in
+// restartTicker) brings the countdown back.
+function extendCurrentImage() {
+  if (!countdown.active || countdown.start) return;
+  cancelCountdown();
+  session.remaining = EXTRA_SECONDS;
+  updateTimer();
+  restartTicker();
 }
 
 // The count reached zero: drop the veil and reveal the image it was counting
@@ -1218,6 +1242,7 @@ $("#fav-btn").addEventListener("click", () => {
     title: state.listTitle || state.listUrl,
     kind: state.listKind || "",
     thumb: state.listThumb || "",
+    count: state.listCount,
   });
   renderFavButton();
 });
@@ -1228,26 +1253,38 @@ $("#countdown-pause").addEventListener("click", () => {
 $("#countdown-prev").addEventListener("click", () => {
   if (countdown.active) prev();
 });
+$("#countdown-ready").addEventListener("click", () => {
+  if (countdown.active) finishCountdown();
+});
+$("#countdown-extra").addEventListener("click", extendCurrentImage);
 
 $("#controls").addEventListener("click", (event) => {
   const btn = event.target.closest("button");
   if (!btn) return;
-  if (btn.dataset.dock) {
-    setDock(btn.dataset.dock);
-    return;
-  }
   const action = btn.dataset.action;
   if (action === "prev") prev();
   else if (action === "skip") next();
   else if (action === "pause") togglePause();
   else if (action === "reroll") reroll();
   else if (action === "end") endSession();
-  else if (action === "compact") setCompact(!readCompact());
-  else if (action === "audio") setAudioEnabled(!readAudioEnabled());
+});
+
+$("#settings-btn").addEventListener("click", openSettings);
+$("#settings-backdrop").addEventListener("click", closeSettings);
+$("#settings-close").addEventListener("click", closeSettings);
+$("#settings-panel").addEventListener("click", (event) => {
+  const btn = event.target.closest("button");
+  if (!btn) return;
+  if (btn.dataset.dock) setDock(btn.dataset.dock);
+  else if (btn.dataset.audio) setAudioEnabled(btn.dataset.audio === "on");
 });
 
 document.addEventListener("keydown", (event) => {
   if (views.session.hidden) return;
+  if (!$("#settings-modal").hidden) {
+    if (event.key === "Escape") closeSettings();
+    return;
+  }
   if (event.key === " ") { event.preventDefault(); togglePause(); }
   else if (event.key === "ArrowLeft") prev();
   else if (event.key === "ArrowRight") next();
@@ -1267,7 +1304,7 @@ $("#new-btn").addEventListener("click", () => {
 // ---- Pointer-idle watcher ----------------------------------------------
 //
 // Stamps document.body.dataset.activity while the pointer (or keyboard) is
-// active and clears it after 2s of stillness. The compact toolbar and the
+// active and clears it after 2s of stillness. The floating toolbar and the
 // zoom buttons react to it (in styles.css): they fade away when idle so the
 // reference image is unobstructed, and snap back the instant the mouse
 // moves — including stylus hover on a drawing tablet, so a pen-only user
@@ -1293,7 +1330,6 @@ function initIdleWatcher() {
 // ---- Boot ----------------------------------------------------------------
 
 setDock(readDock());
-setCompact(readCompact());
 setAudioEnabled(readAudioEnabled());
 initIdleWatcher();
 initZoomControls();

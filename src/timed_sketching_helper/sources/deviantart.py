@@ -388,7 +388,9 @@ class DeviantArtProvider:
         async with httpx.AsyncClient(
             timeout=30.0, headers={"User-Agent": USER_AGENT}
         ) as client:
-            folders = await self._folders(client, "collections", username, progress)
+            folders = await self._folders(
+                client, "collections", username, progress, calculate_size=True
+            )
             collections = [
                 {
                     "name": "All favourites",
@@ -622,18 +624,22 @@ class DeviantArtProvider:
         endpoint: str,
         username: str,
         progress: _Progress,
+        *,
+        calculate_size: bool = False,
     ) -> list[dict]:
         folders: list[dict] = []
         offset = 0
+        params = {"username": username, "limit": FOLDER_PAGE_LIMIT}
+        # DeviantArt omits each folder's `size` (deviation count) unless this
+        # is set — it isn't needed by the folder-slug-matching call sites, so
+        # only list_collections() (which wants the count) pays for it.
+        if calculate_size:
+            params["calculate_size"] = "true"
         while True:
             payload = await self._get(
                 client,
                 f"/{endpoint}/folders",
-                params={
-                    "username": username,
-                    "offset": offset,
-                    "limit": FOLDER_PAGE_LIMIT,
-                },
+                params={**params, "offset": offset},
             )
             progress.request_done()
             folders.extend(payload.get("results", []))

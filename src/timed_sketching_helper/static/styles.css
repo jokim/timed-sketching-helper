@@ -574,32 +574,15 @@ kbd {
 
 #view-session {
   display: grid;
-  gap: 8px;
-  padding: 8px;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "stage";
+  padding: 0;
+  gap: 0;
   height: 100%;
   min-height: 0;
   overflow: hidden;
   position: relative;
-}
-#view-session[data-dock="top"] {
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "controls" "stage";
-}
-#view-session[data-dock="bottom"] {
-  grid-template-rows: minmax(0, 1fr) auto;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "stage" "controls";
-}
-#view-session[data-dock="left"] {
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-areas: "controls stage";
-}
-#view-session[data-dock="right"] {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-areas: "stage controls";
 }
 
 #stage {
@@ -612,8 +595,8 @@ kbd {
   justify-content: center;
   overflow: hidden;
   background: radial-gradient(ellipse 70% 60% at 50% 42%, #15181a, #0e0f10 78%);
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
+  border: none;
+  border-radius: 0;
 }
 #stage-img {
   width: 100%;
@@ -668,7 +651,7 @@ kbd {
 }
 /* Pointer active in the last 2s (body[data-activity], set by app.js), or the
    zoom controls themselves hovered/focused: bring them fully back, quickly.
-   Same mechanism as the minimized toolbar below, so a stylus hovering the
+   Same mechanism as the toolbar below, so a stylus hovering the
    drawing tablet — not just a mouse — wakes the buttons back up. */
 body[data-activity] #zoom,
 #zoom:hover,
@@ -692,6 +675,41 @@ body[data-activity] #zoom,
   transition: border-color 0.12s, color 0.12s;
 }
 #zoom button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Settings: fixed to the top-right corner regardless of toolbar dock, since
+   that's the conventional spot for it — not part of #controls. `top` lines
+   it up with #hud's progress/timer row (14px padding-top, ~30px line) rather
+   than sitting below it. */
+#settings-btn {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  color: var(--fg);
+  background: rgba(20, 22, 24, 0.72);
+  border: none;
+  border-radius: 9px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  opacity: 0.01;
+  transition: opacity 0.5s ease-out, color 0.12s;
+}
+/* Same wake mechanism as #zoom / the toolbar: recent pointer activity
+   (body[data-activity], set by app.js), or the button itself hovered/
+   focused, brings it fully back. */
+body[data-activity] #settings-btn,
+#settings-btn:hover,
+#settings-btn:focus-visible {
+  opacity: 1;
+  transition: opacity 0.15s ease;
+}
+#settings-btn:hover { color: var(--accent); }
+
 #zoom button:disabled {
   opacity: 0.35;
   cursor: default;
@@ -752,7 +770,7 @@ body[data-activity] #zoom,
   opacity: 0.01;
   transition: opacity 0.5s ease-out;
 }
-/* Same wake mechanism as #zoom / the minimized toolbar: recent pointer
+/* Same wake mechanism as #zoom / the toolbar: recent pointer
    activity (body[data-activity], set by app.js), or the link itself
    hovered/focused, brings it fully back so it doesn't sit over the
    drawing while idle. */
@@ -856,18 +874,18 @@ body[data-activity] #caption,
 
 #countdown-actions {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
 }
 #countdown-actions button {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  padding: 14px 26px;
   font: 600 15px/1 system-ui, sans-serif;
   color: var(--fg);
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--border);
-  border-radius: 12px;
   cursor: pointer;
   transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
@@ -876,129 +894,40 @@ body[data-activity] #caption,
   color: var(--accent-hi);
   background: rgba(255, 255, 255, 0.09);
 }
+
+/* Primary: Pause/Resume alone, full-size — the one control always relevant. */
+#countdown-actions-primary button {
+  padding: 14px 26px;
+  border-radius: 12px;
+}
+
+/* Secondary: Previous / +5s / Ready — demoted below Pause, smaller and
+   slightly muted so they don't compete with it for attention. */
+#countdown-actions-secondary {
+  display: flex;
+  gap: 10px;
+}
+#countdown-actions-secondary button {
+  padding: 9px 16px;
+  font-size: 13px;
+  border-radius: 9px;
+  color: var(--muted);
+}
 #countdown-pause .icon-resume { display: none; }
 #countdown-veil.paused #countdown-pause .icon-pause { display: none; }
 #countdown-veil.paused #countdown-pause .icon-resume { display: block; }
 
-/* Toolbar */
+/* Toolbar — a floating, icon-only bar over the image; position follows
+   #view-session[data-dock]. Toolbar placement and the countdown-beep switch
+   live in the Settings modal below, not in the toolbar itself. */
 #controls {
-  grid-area: controls;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--panel);
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-}
-#view-session[data-dock="left"] #controls,
-#view-session[data-dock="right"] #controls {
-  flex-direction: column;
-  align-items: stretch;
-  width: 168px;
-  padding: 10px 10px;
-}
-
-.ctrl-group {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-#view-session[data-dock="left"] .ctrl-group,
-#view-session[data-dock="right"] .ctrl-group {
-  flex-direction: column;
-}
-
-.ctrl-secondary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-#view-session[data-dock="left"] .ctrl-secondary,
-#view-session[data-dock="right"] .ctrl-secondary {
-  flex-direction: column;
-  align-items: stretch;
-  margin-left: 0;
-  margin-top: auto;
-}
-
-.compact-toggle .icon-expand { display: none; }
-.audio-toggle .icon-audio-off { display: none; }
-.audio-toggle[aria-pressed="true"] .icon-audio-on { display: none; }
-.audio-toggle[aria-pressed="true"] .icon-audio-off { display: block; }
-
-#controls button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 6px 9px;
-  font: 500 12px/1 system-ui, sans-serif;
-  color: var(--fg-dim);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  cursor: pointer;
-  transition: border-color 0.12s, color 0.12s, background 0.12s;
-}
-#controls button:hover { color: var(--fg); border-color: var(--accent); }
-
-#controls .end,
-#controls .audio-toggle,
-#controls .compact-toggle {
-  background: transparent;
-  color: var(--fg-dim);
-}
-#controls .end:hover,
-#controls .audio-toggle:hover,
-#controls .compact-toggle:hover { color: var(--accent); border-color: var(--accent); }
-
-.dock {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-#view-session[data-dock="left"] .dock,
-#view-session[data-dock="right"] .dock {
-  justify-content: center;
-}
-.dock button {
-  padding: 6px;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 7px;
-}
-.dock button:hover { color: var(--fg-dim); border-color: transparent; background: transparent; }
-.dock button[aria-pressed="true"] {
-  color: var(--accent-ink);
-  background: var(--accent);
-}
-
-/* ---- Minimized: floating icon-only toolbar ------------------------- */
-
-#view-session[data-compact] {
-  padding: 0;
-  gap: 0;
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "stage";
-}
-#view-session[data-compact] #stage {
-  border: none;
-  border-radius: 0;
-}
-
-#view-session[data-compact] #controls {
   position: absolute;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: auto;
   padding: 0;
-  gap: 10px;
   background: transparent;
   border: none;
   opacity: 0.01;
@@ -1006,35 +935,38 @@ body[data-activity] #caption,
 }
 /* Pointer active in the last 2s (body[data-activity], set by app.js), or the
    toolbar itself hovered/focused: bring it fully back, quickly. */
-body[data-activity] #view-session[data-compact] #controls,
-#view-session[data-compact] #controls:hover,
-#view-session[data-compact] #controls:focus-within {
+body[data-activity] #controls,
+#controls:hover,
+#controls:focus-within {
   opacity: 1;
   transition: opacity 0.15s ease;
 }
 
-#view-session[data-compact][data-dock="top"] #controls {
+#view-session[data-dock="top"] #controls {
   top: 64px;
   left: 50%;
   transform: translateX(-50%);
   flex-direction: row;
   align-items: center;
 }
-#view-session[data-compact][data-dock="bottom"] #controls {
-  bottom: 14px;
+/* the caption (title) stays anchored to the very bottom edge — the one thing
+   left visible once the toolbar fades out — so the toolbar sits above it
+   rather than on top of it. */
+#view-session[data-dock="bottom"] #controls {
+  bottom: 44px;
   left: 50%;
   transform: translateX(-50%);
   flex-direction: row;
   align-items: center;
 }
-#view-session[data-compact][data-dock="left"] #controls {
+#view-session[data-dock="left"] #controls {
   left: 14px;
   top: 50%;
   transform: translateY(-50%);
   flex-direction: column;
   align-items: center;
 }
-#view-session[data-compact][data-dock="right"] #controls {
+#view-session[data-dock="right"] #controls {
   right: 14px;
   top: 50%;
   transform: translateY(-50%);
@@ -1042,79 +974,50 @@ body[data-activity] #view-session[data-compact] #controls,
   align-items: center;
 }
 
-#view-session[data-compact] #controls .lbl { display: none; }
-#view-session[data-compact] #controls button {
+#controls .lbl { display: none; }
+#controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   padding: 8px;
+  font: 500 12px/1 system-ui, sans-serif;
   color: var(--fg);
   background: rgba(20, 22, 24, 0.72);
-  border-color: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
   backdrop-filter: blur(6px);
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
-#view-session[data-compact] #controls .ctrl-group,
-#view-session[data-compact] #controls .ctrl-secondary {
-  margin: 0;
+#controls button:hover { color: var(--accent); border-color: var(--accent); }
+
+.ctrl-group,
+.ctrl-secondary {
+  display: flex;
+  align-items: center;
   gap: 6px;
   flex-wrap: nowrap;
 }
-#view-session[data-compact][data-dock="left"] #controls .ctrl-group,
-#view-session[data-compact][data-dock="right"] #controls .ctrl-group,
-#view-session[data-compact][data-dock="left"] #controls .ctrl-secondary,
-#view-session[data-compact][data-dock="right"] #controls .ctrl-secondary {
+#view-session[data-dock="left"] .ctrl-group,
+#view-session[data-dock="right"] .ctrl-group,
+#view-session[data-dock="left"] .ctrl-secondary,
+#view-session[data-dock="right"] .ctrl-secondary {
   flex-direction: column;
   align-items: center;
 }
 
-/* secondary controls read a touch quieter than the nav cluster */
-#view-session[data-compact] #controls .ctrl-secondary { opacity: 0.85; }
+/* secondary controls (Settings / End) read a touch quieter than the nav cluster */
+.ctrl-secondary { opacity: 0.85; }
 
-/* the dock-position switcher has no place on the floating bar */
-#view-session[data-compact] #controls .dock { display: none; }
+/* keep the zoom buttons clear of a right-docked toolbar */
+#view-session[data-dock="right"] #zoom { right: 62px; }
 
-/* toggle the collapse / expand glyph */
-#view-session[data-compact] .compact-toggle .icon-collapse { display: none; }
-#view-session[data-compact] .compact-toggle .icon-expand { display: block; }
-
-/* keep the zoom buttons clear of a right-docked floating bar */
-#view-session[data-compact][data-dock="right"] #zoom { right: 62px; }
-
-/* Bottom-docked + minimized: the caption (title) stays anchored to the very
-   bottom edge — it's the one thing left visible once the toolbar fades out —
-   so lift the floating toolbar to sit above it instead of on top of it. */
-#view-session[data-compact][data-dock="bottom"] #controls { bottom: 44px; }
-
-/* ---- Small screens: force a top toolbar ---------------------------- */
+/* ---- Small screens: force the toolbar to the top edge -------------- */
 
 @media (max-width: 640px) {
-  #view-session[data-dock="left"],
-  #view-session[data-dock="right"] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas: "controls" "stage";
-  }
   #view-session[data-dock="left"] #controls,
   #view-session[data-dock="right"] #controls {
-    flex-direction: row;
-    align-items: center;
-    width: auto;
-    flex-wrap: wrap;
-  }
-  #view-session[data-dock="left"] .ctrl-group,
-  #view-session[data-dock="right"] .ctrl-group {
-    flex-direction: row;
-  }
-  #view-session[data-dock="left"] .ctrl-secondary,
-  #view-session[data-dock="right"] .ctrl-secondary {
-    flex-direction: row;
-    align-items: center;
-    margin-top: 0;
-    margin-left: auto;
-  }
-}
-
-/* small-screen compact bar: horizontal, top edge, clear of the HUD */
-@media (max-width: 640px) {
-  #view-session[data-compact][data-dock="left"] #controls,
-  #view-session[data-compact][data-dock="right"] #controls {
     top: 64px;
     bottom: auto;
     left: 50%;
@@ -1123,10 +1026,104 @@ body[data-activity] #view-session[data-compact] #controls,
     flex-direction: row;
     align-items: center;
   }
-  #view-session[data-compact][data-dock="left"] #controls .ctrl-group,
-  #view-session[data-compact][data-dock="right"] #controls .ctrl-group,
-  #view-session[data-compact][data-dock="left"] #controls .ctrl-secondary,
-  #view-session[data-compact][data-dock="right"] #controls .ctrl-secondary {
+  #view-session[data-dock="left"] .ctrl-group,
+  #view-session[data-dock="right"] .ctrl-group,
+  #view-session[data-dock="left"] .ctrl-secondary,
+  #view-session[data-dock="right"] .ctrl-secondary {
     flex-direction: row;
   }
+}
+
+/* ---- Settings modal -------------------------------------------------- */
+/* Opened from the top-right gear button (#settings-btn); houses toolbar
+   placement and the countdown-beep switch, since the toolbar itself only
+   ever shows icons. */
+
+#settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#settings-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 9, 10, 0.6);
+}
+#settings-panel {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  margin: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  padding: 20px 22px 24px;
+  box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.7);
+}
+#settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#settings-header h2 {
+  margin: 0;
+  font: 600 17px/1 system-ui, sans-serif;
+  color: var(--fg);
+}
+#settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#settings-close:hover { color: var(--fg); border-color: var(--border); }
+
+.settings-section { margin-top: 18px; }
+.settings-section h3 {
+  margin: 0 0 8px;
+  font: 600 12px/1 system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* shared segmented-control look for toolbar-position and countdown-beep */
+.dock,
+.audio-choice {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.dock button,
+.audio-choice button {
+  padding: 6px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.audio-choice button {
+  flex: 1;
+  padding: 8px 14px;
+  font: 500 13px system-ui, sans-serif;
+}
+.dock button:hover,
+.audio-choice button:hover { color: var(--fg-dim); border-color: transparent; background: transparent; }
+.dock button[aria-pressed="true"],
+.audio-choice button[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background: var(--accent);
 }

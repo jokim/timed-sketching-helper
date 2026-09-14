@@ -996,6 +996,7 @@ async def test_list_collections_returns_all_favourites_plus_named_folders():
     collections = await DeviantArtProvider("id", "secret").list_collections("artist")
 
     assert folders.called
+    assert folders.calls[0].request.url.params["calculate_size"] == "true"
     assert collections == [
         {
             "name": "All favourites",
