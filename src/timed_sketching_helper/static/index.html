@@ -363,6 +363,26 @@
           <ul id="log-list" class="log-list"></ul>
         </div>
       </section>
+
+      <div id="app-settings-modal" hidden>
+        <div id="app-settings-backdrop"></div>
+        <div id="app-settings-panel" role="dialog" aria-modal="true" aria-labelledby="app-settings-title">
+          <div id="app-settings-header">
+            <h2 id="app-settings-title">Settings</h2>
+            <button type="button" id="app-settings-close" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </div>
+          <div class="settings-section">
+            <h3>Practice log</h3>
+            <p class="field-hint">Every practice you run is saved locally so you can revisit or restart it.</p>
+            <button type="button" id="clear-practice-log-btn" class="danger-btn">Clear practice log</button>
+          </div>
+        </div>
+      </div>
     </main>
     <script src="/static/app.js"></script>
   </body>

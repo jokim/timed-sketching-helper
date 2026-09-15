@@ -1484,6 +1484,34 @@ async function restartPractice(entry) {
 $("#practice-log-btn").addEventListener("click", openPracticeLog);
 $("#log-back-btn").addEventListener("click", () => show("start"));
 
+// ---- App-wide settings modal -------------------------------------------
+
+function openAppSettings() {
+  $("#app-settings-modal").hidden = false;
+}
+
+function closeAppSettings() {
+  $("#app-settings-modal").hidden = true;
+}
+
+$("#app-settings-btn").addEventListener("click", openAppSettings);
+$("#app-settings-backdrop").addEventListener("click", closeAppSettings);
+$("#app-settings-close").addEventListener("click", closeAppSettings);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("#app-settings-modal").hidden) closeAppSettings();
+});
+
+$("#clear-practice-log-btn").addEventListener("click", async () => {
+  if (!window.confirm("Clear your entire practice log? This can't be undone.")) return;
+  try {
+    await fetch("/api/practice-log", { method: "DELETE" });
+  } catch {
+    /* best effort */
+  }
+  closeAppSettings();
+  if (!views.practiceLog.hidden) loadPracticeLog();
+});
+
 // ---- Pointer-idle watcher ----------------------------------------------
 //
 // Stamps document.body.dataset.activity while the pointer (or keyboard) is

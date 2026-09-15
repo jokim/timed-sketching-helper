@@ -1288,3 +1288,69 @@ body[data-activity] #controls,
   object-fit: cover;
   display: block;
 }
+
+/* ---- App-wide settings modal ------------------------------------------ */
+/* Opened from the start screen's gear button (#app-settings-btn). Separate
+   from #settings-modal (the in-session dock/beep modal, which auto-pauses
+   the running practice) since this one is only ever reachable when no
+   practice is running. */
+
+#app-settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#app-settings-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 9, 10, 0.6);
+}
+#app-settings-panel {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  margin: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  padding: 20px 22px 24px;
+  box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.7);
+}
+#app-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#app-settings-header h2 {
+  margin: 0;
+  font: 600 17px/1 system-ui, sans-serif;
+  color: var(--fg);
+}
+#app-settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#app-settings-close:hover { color: var(--fg); border-color: var(--border); }
+
+.danger-btn {
+  margin-top: 10px;
+  padding: 9px 14px;
+  font: 500 13px system-ui, sans-serif;
+  color: var(--danger);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.danger-btn:hover { border-color: var(--danger); background: rgba(214, 139, 129, 0.12); }
