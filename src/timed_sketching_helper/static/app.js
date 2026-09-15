@@ -502,6 +502,7 @@ const state = {
   listCount: null,
   duration: 90,
   count: 20,
+  practiceId: null,
 };
 
 // DeviantArt chevron-D mark (simpleicons.org path). Uses currentColor so it
@@ -772,6 +773,7 @@ async function startSession() {
   session.pool = data.reroll_pool;
   session.index = 0;
   state.duration = data.duration;
+  state.practiceId = data.practice_id ?? null;
   preloaded.clear();
   setStartStatus("");
   show("session");
@@ -1219,17 +1221,33 @@ function renderFavButton() {
   btn.title = favd ? "Saved to favorites" : "Save to favorites";
 }
 
+// Fire-and-forget: a failure here must never block leaving the practice.
+// Clears state.practiceId so a later "New images from the same reference"
+// click (which calls startSession() directly, bypassing this function)
+// can't double-report the just-finished practice.
+function reportPracticeOutcome(status, shownCount) {
+  if (!state.practiceId) return;
+  fetch(`/api/practice-log/${state.practiceId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status, shown_count: shownCount }),
+  }).catch(() => {});
+  state.practiceId = null;
+}
+
 function finishSession() {
   clearInterval(session.ticker);
   cancelCountdown();
   $("#done-summary").textContent = `You practiced ${session.items.length} images at ${state.duration}s each.`;
   renderFavButton();
+  reportPracticeOutcome("completed", session.items.length);
   show("done");
 }
 
 function endSession() {
   clearInterval(session.ticker);
   cancelCountdown();
+  reportPracticeOutcome("ended_early", session.index);
   renderSaved();
   loadAuthStatus();
   show("start");
