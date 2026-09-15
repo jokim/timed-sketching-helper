@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 from contextvars import ContextVar
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 import uvicorn
@@ -123,6 +124,11 @@ class PrecacheRequest(BaseModel):
 class PrefsRequest(BaseModel):
     default_count: int = Field(ge=1, le=500)
     default_duration: int = Field(ge=1, le=3600)
+
+
+class PracticeFinishRequest(BaseModel):
+    status: Literal["completed", "ended_early"]
+    shown_count: int = Field(ge=0)
 
 
 def _default_resolver(provider: DeviantArtProvider):
@@ -428,6 +434,21 @@ def create_app(
             "items": [_item_dto(by_id[s]) for s in selected],
             "reroll_pool": [_item_dto(by_id[s]) for s in pool],
         }
+
+    @app.patch("/api/practice-log/{practice_id}")
+    async def finish_practice_log_entry(
+        practice_id: int, body: PracticeFinishRequest
+    ) -> dict:
+        updated = db.finish_practice_log(
+            conn,
+            practice_id,
+            db.current_account(),
+            status=body.status,
+            shown_count=body.shown_count,
+        )
+        if not updated:
+            raise HTTPException(404, "Practice log entry not found.")
+        return {"status": "ok"}
 
     @app.post("/api/precache")
     async def precache_backup(

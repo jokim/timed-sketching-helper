@@ -183,3 +183,38 @@ def test_create_session_records_practice_log_entry(client, conn):
     assert row["status"] == "in_progress"
     items = db_module.practice_log_items(conn, session["practice_id"])
     assert {i["source_id"] for i in items} == {i["source_id"] for i in session["items"]}
+
+
+def test_finish_practice_endpoint_updates_status(client):
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+    practice_id = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 2, "duration": 30}
+    ).json()["practice_id"]
+
+    res = client.patch(
+        f"/api/practice-log/{practice_id}",
+        json={"status": "completed", "shown_count": 2},
+    )
+
+    assert res.status_code == 200
+
+
+def test_finish_practice_endpoint_404_for_unknown_id(client):
+    res = client.patch(
+        "/api/practice-log/999", json={"status": "completed", "shown_count": 0}
+    )
+    assert res.status_code == 404
+
+
+def test_finish_practice_endpoint_rejects_invalid_status(client):
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+    practice_id = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 1, "duration": 10}
+    ).json()["practice_id"]
+
+    res = client.patch(
+        f"/api/practice-log/{practice_id}",
+        json={"status": "bogus", "shown_count": 1},
+    )
+
+    assert res.status_code == 422
