@@ -218,3 +218,36 @@ def test_finish_practice_endpoint_rejects_invalid_status(client):
     )
 
     assert res.status_code == 422
+
+
+def test_list_practice_log_endpoint_returns_newest_first(client):
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+    first = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 1, "duration": 10}
+    ).json()["practice_id"]
+    second = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 1, "duration": 10}
+    ).json()["practice_id"]
+
+    entries = client.get("/api/practice-log").json()
+
+    assert [e["id"] for e in entries] == [second, first]
+    assert entries[0]["source_url"] == GALLERY_URL
+    assert entries[0]["thumb"] is not None
+
+
+def test_read_practice_log_endpoint_returns_items(client):
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+    session = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 2, "duration": 10}
+    ).json()
+
+    entry = client.get(f"/api/practice-log/{session['practice_id']}").json()
+
+    assert {i["source_id"] for i in entry["items"]} == {
+        i["source_id"] for i in session["items"]
+    }
+
+
+def test_read_practice_log_endpoint_404_for_unknown_id(client):
+    assert client.get("/api/practice-log/999").status_code == 404

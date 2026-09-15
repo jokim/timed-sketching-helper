@@ -149,6 +149,22 @@ def _item_dto(item) -> dict:
     }
 
 
+def _practice_log_dto(row, thumb: str | None = None) -> dict:
+    return {
+        "id": row["id"],
+        "source_url": row["source_url"],
+        "list_title": row["list_title"],
+        "list_kind": row["list_kind"],
+        "count": row["count"],
+        "duration": row["duration"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "status": row["status"],
+        "shown_count": row["shown_count"],
+        "thumb": thumb,
+    }
+
+
 def create_app(
     *,
     conn: sqlite3.Connection | None = None,
@@ -449,6 +465,33 @@ def create_app(
         if not updated:
             raise HTTPException(404, "Practice log entry not found.")
         return {"status": "ok"}
+
+    @app.get("/api/practice-log")
+    async def list_practice_log_entries(limit: int = 200) -> list[dict]:
+        rows = db.list_practice_log(
+            conn, db.current_account(), limit=min(max(limit, 1), 1000)
+        )
+        return [_practice_log_dto(r, thumb=r["thumb"]) for r in rows]
+
+    @app.get("/api/practice-log/{practice_id}")
+    async def read_practice_log_entry(practice_id: int) -> dict:
+        row = db.get_practice_log(conn, practice_id, db.current_account())
+        if row is None:
+            raise HTTPException(404, "Practice log entry not found.")
+        items = db.practice_log_items(conn, practice_id)
+        dto = _practice_log_dto(
+            row, thumb=items[0]["source_id"] if items else None
+        )
+        dto["items"] = [
+            {
+                "source_id": i["source_id"],
+                "title": i["title"],
+                "author": i["author"],
+                "page_url": i["page_url"],
+            }
+            for i in items
+        ]
+        return dto
 
     @app.post("/api/precache")
     async def precache_backup(
