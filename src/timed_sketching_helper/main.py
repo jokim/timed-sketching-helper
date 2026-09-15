@@ -408,8 +408,23 @@ def create_app(
         selected, pool = build_session(list(by_id), body.count)
         backup = pool[:BACKUP_POOL_SIZE]
         background_tasks.add_task(precache, [by_id[s] for s in selected + backup])
+        practice_id = None
+        try:
+            practice_id = db.create_practice_log(
+                conn,
+                db.current_account(),
+                source_url=image_list.source_url,
+                list_title=image_list.title,
+                list_kind=image_list.kind,
+                count=body.count,
+                duration=body.duration,
+                items=[by_id[s] for s in selected],
+            )
+        except Exception:  # noqa: BLE001 - logging a practice must never block starting it
+            logger.exception("Failed to record practice log entry")
         return {
             "duration": body.duration,
+            "practice_id": practice_id,
             "items": [_item_dto(by_id[s]) for s in selected],
             "reroll_pool": [_item_dto(by_id[s]) for s in pool],
         }

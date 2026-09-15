@@ -1,6 +1,61 @@
 from timed_sketching_helper import db as db_module
 from timed_sketching_helper.models import ListItem
 
+import pytest
+from fastapi.testclient import TestClient
+
+from timed_sketching_helper.imagecache import ImageCache
+from timed_sketching_helper.main import create_app
+from timed_sketching_helper.models import ImageMeta, SourceRef
+from timed_sketching_helper.sources.base import UnknownSourceError
+
+GALLERY_URL = "https://www.deviantart.com/artist/gallery/all"
+
+
+class FakeProvider:
+    name = "deviantart"
+
+    def __init__(self, images):
+        self.images = images
+
+    def matches(self, url):
+        return "deviantart.com" in url
+
+    def parse(self, url):
+        return SourceRef("deviantart", "gallery", "artist", None, url)
+
+    async def list_images(self, ref, *, on_progress=None, max_images=None, max_requests=None):
+        images = list(self.images)
+        if max_images is not None:
+            images = images[:max_images]
+        for n, _ in enumerate(images, start=1):
+            if on_progress:
+                on_progress(n, n)
+        return images
+
+
+def meta(source_id):
+    return ImageMeta(
+        source_id=source_id,
+        title=f"T{source_id}",
+        author="artist",
+        image_url=f"https://img.example/{source_id}.png",
+        page_url=f"https://www.deviantart.com/artist/art/{source_id}",
+    )
+
+
+@pytest.fixture
+def client(conn, tmp_path):
+    provider = FakeProvider([meta("a"), meta("b"), meta("c")])
+
+    def resolver(url):
+        if provider.matches(url):
+            return provider
+        raise UnknownSourceError(url)
+
+    app = create_app(conn=conn, cache=ImageCache(conn, tmp_path / "cache"), resolver=resolver)
+    return TestClient(app, base_url="http://localhost")
+
 
 def _item(source_id):
     return ListItem(
@@ -109,3 +164,22 @@ def test_clear_practice_log_removes_all_entries_for_account(conn):
     db_module.clear_practice_log(conn, db_module.current_account())
 
     assert db_module.list_practice_log(conn, db_module.current_account()) == []
+
+
+def test_create_session_records_practice_log_entry(client, conn):
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+
+    session = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 2, "duration": 30}
+    ).json()
+
+    assert session["practice_id"] is not None
+    row = db_module.get_practice_log(
+        conn, session["practice_id"], db_module.current_account()
+    )
+    assert row["source_url"] == GALLERY_URL
+    assert row["count"] == 2
+    assert row["duration"] == 30
+    assert row["status"] == "in_progress"
+    items = db_module.practice_log_items(conn, session["practice_id"])
+    assert {i["source_id"] for i in items} == {i["source_id"] for i in session["items"]}
