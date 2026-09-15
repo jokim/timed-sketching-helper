@@ -493,6 +493,18 @@ def create_app(
         ]
         return dto
 
+    @app.delete("/api/practice-log/{practice_id}")
+    async def delete_practice_log_entry(practice_id: int) -> Response:
+        deleted = db.delete_practice_log(conn, practice_id, db.current_account())
+        if not deleted:
+            raise HTTPException(404, "Practice log entry not found.")
+        return Response(status_code=204)
+
+    @app.delete("/api/practice-log")
+    async def clear_practice_log_entries() -> Response:
+        db.clear_practice_log(conn, db.current_account())
+        return Response(status_code=204)
+
     @app.post("/api/precache")
     async def precache_backup(
         body: PrecacheRequest, background_tasks: BackgroundTasks

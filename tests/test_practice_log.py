@@ -251,3 +251,30 @@ def test_read_practice_log_endpoint_returns_items(client):
 
 def test_read_practice_log_endpoint_404_for_unknown_id(client):
     assert client.get("/api/practice-log/999").status_code == 404
+
+
+def test_delete_practice_log_endpoint_removes_entry(client):
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+    practice_id = client.post(
+        "/api/sessions", json={"list_id": list_id, "count": 1, "duration": 10}
+    ).json()["practice_id"]
+
+    res = client.delete(f"/api/practice-log/{practice_id}")
+
+    assert res.status_code == 204
+    assert client.get(f"/api/practice-log/{practice_id}").status_code == 404
+
+
+def test_delete_practice_log_endpoint_404_for_unknown_id(client):
+    assert client.delete("/api/practice-log/999").status_code == 404
+
+
+def test_clear_practice_log_endpoint_removes_all_entries(client):
+    list_id = client.post("/api/lists", json={"url": GALLERY_URL}).json()["list_id"]
+    client.post("/api/sessions", json={"list_id": list_id, "count": 1, "duration": 10})
+    client.post("/api/sessions", json={"list_id": list_id, "count": 1, "duration": 10})
+
+    res = client.delete("/api/practice-log")
+
+    assert res.status_code == 204
+    assert client.get("/api/practice-log").json() == []
