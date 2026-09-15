@@ -62,6 +62,30 @@ CREATE TABLE IF NOT EXISTS preferences (
     PRIMARY KEY (account_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS practice_log (
+    id          INTEGER PRIMARY KEY,
+    account_id  INTEGER NOT NULL REFERENCES accounts(id),
+    source_url  TEXT NOT NULL,
+    list_title  TEXT NOT NULL,
+    list_kind   TEXT NOT NULL,
+    count       INTEGER NOT NULL,
+    duration    INTEGER NOT NULL,
+    started_at  TEXT NOT NULL,
+    ended_at    TEXT,
+    status      TEXT NOT NULL DEFAULT 'in_progress',
+    shown_count INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS practice_log_items (
+    id              INTEGER PRIMARY KEY,
+    practice_log_id INTEGER NOT NULL REFERENCES practice_log(id) ON DELETE CASCADE,
+    source_id       TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    author          TEXT NOT NULL,
+    page_url        TEXT NOT NULL,
+    position        INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS deviantart_oauth (
     session_id    TEXT PRIMARY KEY,
     access_token  TEXT NOT NULL,
@@ -347,4 +371,101 @@ def set_preferences(
             "INSERT OR REPLACE INTO preferences (account_id, key, value) VALUES (?, ?, ?)",
             (account_id, key, str(value)),
         )
+    conn.commit()
+
+
+# -- practice log --------------------------------------------------------
+
+
+def create_practice_log(
+    conn: sqlite3.Connection,
+    account_id: int,
+    *,
+    source_url: str,
+    list_title: str,
+    list_kind: str,
+    count: int,
+    duration: int,
+    items: list,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO practice_log"
+        " (account_id, source_url, list_title, list_kind, count, duration, started_at, status)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress')",
+        (account_id, source_url, list_title, list_kind, count, duration, _now()),
+    )
+    practice_id = int(cursor.lastrowid)
+    conn.executemany(
+        "INSERT INTO practice_log_items"
+        " (practice_log_id, source_id, title, author, page_url, position)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (practice_id, item.source_id, item.title, item.author, item.page_url, position)
+            for position, item in enumerate(items)
+        ],
+    )
+    conn.commit()
+    return practice_id
+
+
+def finish_practice_log(
+    conn: sqlite3.Connection,
+    practice_id: int,
+    account_id: int,
+    *,
+    status: str,
+    shown_count: int,
+) -> bool:
+    cursor = conn.execute(
+        "UPDATE practice_log SET status = ?, shown_count = ?, ended_at = ?"
+        " WHERE id = ? AND account_id = ?",
+        (status, shown_count, _now(), practice_id, account_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def list_practice_log(
+    conn: sqlite3.Connection, account_id: int, limit: int = 200
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT pl.*, ("
+        "  SELECT source_id FROM practice_log_items"
+        "  WHERE practice_log_id = pl.id AND position = 0"
+        ") AS thumb"
+        " FROM practice_log pl WHERE account_id = ? ORDER BY started_at DESC LIMIT ?",
+        (account_id, limit),
+    ).fetchall()
+
+
+def get_practice_log(
+    conn: sqlite3.Connection, practice_id: int, account_id: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM practice_log WHERE id = ? AND account_id = ?",
+        (practice_id, account_id),
+    ).fetchone()
+
+
+def practice_log_items(conn: sqlite3.Connection, practice_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT source_id, title, author, page_url FROM practice_log_items"
+        " WHERE practice_log_id = ? ORDER BY position",
+        (practice_id,),
+    ).fetchall()
+
+
+def delete_practice_log(
+    conn: sqlite3.Connection, practice_id: int, account_id: int
+) -> bool:
+    cursor = conn.execute(
+        "DELETE FROM practice_log WHERE id = ? AND account_id = ?",
+        (practice_id, account_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def clear_practice_log(conn: sqlite3.Connection, account_id: int) -> None:
+    conn.execute("DELETE FROM practice_log WHERE account_id = ?", (account_id,))
     conn.commit()
