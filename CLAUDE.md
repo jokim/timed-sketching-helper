@@ -174,6 +174,30 @@ Key design points, each spanning several files:
   `ListItem`s) resolves each id through `ensure_image` directly, skipping ones
   already cached — no session state is tracked, it just warms the ids it's given.
 
+- **Practice log.** `POST /api/sessions` best-effort writes a `practice_log`
+  row (+ a `practice_log_items` snapshot of the selected images) via
+  `db.create_practice_log`, named "practice" throughout to avoid colliding
+  with the unrelated `tsh_session` browser-identity cookie and the
+  `/api/sessions` drawing-session machinery above — neither is renamed.
+  `finishSession()`/`endSession()` in `app.js` fire-and-forget a
+  `PATCH /api/practice-log/{id}` with the outcome (`completed` /
+  `ended_early`) and how many images were actually shown
+  (`session.items.length` vs `session.index`). The log is entirely
+  independent of `image_lists`/`list_items` — its items are a copy taken at
+  practice start, since `list_items` gets overwritten on every re-fetch of a
+  list (`db.save_list`). The `#view-practice-log` screen (opened from the
+  start screen's `#practice-log-btn`) lists entries via
+  `GET /api/practice-log`, lazily loads a row's image thumbnails via
+  `GET /api/practice-log/{id}` on expand, and its Restart button calls the
+  shared `beginFromUrl()` (also used by the start form's submit handler)
+  with that entry's `source_url`/`count`/`duration` to begin a **new**
+  practice with a fresh random selection — no special-casing, since it's
+  the same code path as any other practice start. `DELETE
+  /api/practice-log/{id}` removes one entry; `DELETE /api/practice-log`
+  (wired to "Clear practice log" in the new app-wide `#app-settings-modal`,
+  distinct from the in-session dock/beep `#settings-modal`) clears all of
+  them for the account.
+
 - **Countdown beep.** `restartTicker()`'s per-second interval calls `playBeep()`
   for the final `BEEP_WINDOW` (5) seconds of an image's timer — a short sine
   tone synthesized with Web Audio (`playBeep`; no asset file, `AudioContext`
