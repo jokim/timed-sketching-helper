@@ -234,8 +234,8 @@ Key design points, each spanning several files:
   `db.current_account()` — the DeviantArt `client_secret` still never leaves
   the server, but which browser's tokens a request can see is now scoped to
   that browser's own cookie instead of one global slot. (List caching,
-  `recent`, and prefs are unrelated to login and stay keyed by the shared
-  `current_account()`, unchanged.)
+  `recent`, prefs, and the practice log are unrelated to login and stay keyed
+  by the shared `current_account()`, unchanged.)
 
 - **DeviantArt user login lives in `sources/deviantart_oauth.py` + the
   `/auth/deviantart/*` routes.** Authorization Code + PKCE grant.

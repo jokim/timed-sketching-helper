@@ -687,6 +687,9 @@ async function beginFromUrl(
 ) {
   state.count = count;
   state.duration = duration;
+  $("#count").value = count;
+  $("#duration").value = duration;
+  rangeSyncs.forEach((sync) => sync());
   const btn = $("#start-btn");
   btn.disabled = true;
   setStartStatus("");
@@ -1449,21 +1452,26 @@ async function loadPracticeLog() {
   const list = $("#log-list");
   list.innerHTML = "";
   let entries = [];
+  let ok = false;
   try {
     entries = await api("/api/practice-log");
+    ok = true;
   } catch {
-    /* leave the list empty on failure */
+    /* leave the list empty on failure — don't claim it's genuinely empty */
   }
-  $("#log-empty").hidden = entries.length > 0;
+  $("#log-empty").hidden = !ok || entries.length > 0;
   for (const entry of entries) list.appendChild(logRow(entry));
 }
 
 async function deleteLogEntry(id, rowEl) {
+  let ok = false;
   try {
-    await fetch(`/api/practice-log/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/practice-log/${id}`, { method: "DELETE" });
+    ok = res.ok;
   } catch {
-    /* best effort */
+    /* network failure — ok stays false */
   }
+  if (!ok) return;
   rowEl.remove();
   if (!$("#log-list").children.length) $("#log-empty").hidden = false;
 }

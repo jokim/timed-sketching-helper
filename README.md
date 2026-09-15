@@ -50,8 +50,11 @@ content enabled.
 ## Privacy
 
 Saved and recent reference URLs live in the browser's `localStorage`, not on
-the server. The backend stores the image cache and DeviantArt OAuth tokens
-under `./data/` (safe to delete), and nothing else.
+the server. The backend stores the image cache, DeviantArt OAuth tokens, and
+a practice log — a timestamped record of each practice session's source URL,
+list title, and the images shown — under `./data/` (safe to delete). The
+practice log has no retention policy by design; clear it any time from
+Settings → **Clear practice log**.
 
 The app is unauthenticated and binds to loopback by default; binding to a
 non-loopback address prints a warning, since a public bind has no auth in
