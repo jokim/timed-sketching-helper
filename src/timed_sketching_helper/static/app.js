@@ -757,6 +757,7 @@ const session = {
   remaining: 0,
   paused: false,
   ticker: null,
+  startedAt: null,
 };
 
 // The black-screen countdown: shown before the first image (`start`) and
@@ -789,6 +790,7 @@ async function startSession() {
   session.items = data.items;
   session.pool = data.reroll_pool;
   session.index = 0;
+  session.startedAt = Date.now();
   state.duration = data.duration;
   state.practiceId = data.practice_id ?? null;
   preloaded.clear();
@@ -1244,10 +1246,13 @@ function renderFavButton() {
 // can't double-report the just-finished practice.
 function reportPracticeOutcome(status, shownCount) {
   if (!state.practiceId) return;
+  const elapsedSeconds = session.startedAt
+    ? Math.round((Date.now() - session.startedAt) / 1000)
+    : 0;
   fetch(`/api/practice-log/${state.practiceId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status, shown_count: shownCount }),
+    body: JSON.stringify({ status, shown_count: shownCount, elapsed_seconds: elapsedSeconds }),
   }).catch(() => {});
   state.practiceId = null;
 }
@@ -1373,7 +1378,8 @@ function logRow(entry) {
     entry.shown_count != null
       ? `${entry.shown_count}/${entry.count} shown`
       : `${entry.count} images`;
-  meta.textContent = `${entry.list_kind || "?"} · ${shown} · ${entry.duration}s each · ${formatLogTimestamp(entry.started_at)}`;
+  const spent = entry.elapsed_seconds != null ? `${formatDuration(entry.elapsed_seconds)} spent · ` : "";
+  meta.textContent = `${entry.list_kind || "?"} · ${shown} · ${entry.duration}s each · ${spent}${formatLogTimestamp(entry.started_at)}`;
   info.append(title, meta);
 
   const status = document.createElement("span");

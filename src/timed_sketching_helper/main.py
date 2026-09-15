@@ -129,6 +129,7 @@ class PrefsRequest(BaseModel):
 class PracticeFinishRequest(BaseModel):
     status: Literal["completed", "ended_early"]
     shown_count: int = Field(ge=0)
+    elapsed_seconds: int = Field(ge=0)
 
 
 def _default_resolver(provider: DeviantArtProvider):
@@ -161,6 +162,7 @@ def _practice_log_dto(row, thumb: str | None = None) -> dict:
         "ended_at": row["ended_at"],
         "status": row["status"],
         "shown_count": row["shown_count"],
+        "elapsed_seconds": row["elapsed_seconds"],
         "thumb": thumb,
     }
 
@@ -461,6 +463,7 @@ def create_app(
             db.current_account(),
             status=body.status,
             shown_count=body.shown_count,
+            elapsed_seconds=body.elapsed_seconds,
         )
         if not updated:
             raise HTTPException(404, "Practice log entry not found.")

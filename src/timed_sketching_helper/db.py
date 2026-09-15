@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS practice_log (
     started_at  TEXT NOT NULL,
     ended_at    TEXT,
     status      TEXT NOT NULL DEFAULT 'in_progress',
-    shown_count INTEGER
+    shown_count INTEGER,
+    elapsed_seconds INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS practice_log_items (
@@ -142,9 +143,24 @@ def _migrate_deviantart_oauth_to_session_keying(conn: sqlite3.Connection) -> Non
         conn.commit()
 
 
+def _migrate_practice_log_add_elapsed_seconds(conn: sqlite3.Connection) -> None:
+    """``practice_log`` predates the ``elapsed_seconds`` column; add it to any
+    table created before this column existed. ``CREATE TABLE IF NOT EXISTS``
+    alone would silently skip an already-existing table, leaving the column
+    missing."""
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(practice_log)").fetchall()
+    }
+    if columns and "elapsed_seconds" not in columns:
+        conn.execute("ALTER TABLE practice_log ADD COLUMN elapsed_seconds INTEGER")
+        conn.commit()
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     _migrate_deviantart_oauth_to_session_keying(conn)
     conn.executescript(SCHEMA)
+    _migrate_practice_log_add_elapsed_seconds(conn)
     conn.execute(
         "INSERT OR IGNORE INTO accounts (id, name, created_at) VALUES (?, ?, ?)",
         (DEFAULT_ACCOUNT_ID, "default", _now()),
@@ -415,11 +431,12 @@ def finish_practice_log(
     *,
     status: str,
     shown_count: int,
+    elapsed_seconds: int,
 ) -> bool:
     cursor = conn.execute(
-        "UPDATE practice_log SET status = ?, shown_count = ?, ended_at = ?"
+        "UPDATE practice_log SET status = ?, shown_count = ?, elapsed_seconds = ?, ended_at = ?"
         " WHERE id = ? AND account_id = ?",
-        (status, shown_count, _now(), practice_id, account_id),
+        (status, shown_count, elapsed_seconds, _now(), practice_id, account_id),
     )
     conn.commit()
     return cursor.rowcount > 0

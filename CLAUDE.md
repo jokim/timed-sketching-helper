@@ -181,8 +181,16 @@ Key design points, each spanning several files:
   `/api/sessions` drawing-session machinery above — neither is renamed.
   `finishSession()`/`endSession()` in `app.js` fire-and-forget a
   `PATCH /api/practice-log/{id}` with the outcome (`completed` /
-  `ended_early`) and how many images were actually shown
-  (`session.items.length` vs `session.index`). The log is entirely
+  `ended_early`), how many images were actually shown
+  (`session.items.length` vs `session.index`), and wall-clock
+  `elapsed_seconds` since `session.startedAt` (set in `startSession()`) —
+  total time in the practice, pauses and countdowns included, not just
+  active drawing time. `elapsed_seconds` is `null` until an entry finishes
+  (`practice_log`'s column is migrated in for any pre-existing table via
+  `db._migrate_practice_log_add_elapsed_seconds`, run every `init_db()`
+  after the `CREATE TABLE IF NOT EXISTS`, which alone wouldn't add a column
+  to an already-existing table). The log-view row shows it as "Xm Ys spent"
+  in the meta line once present. The log is entirely
   independent of `image_lists`/`list_items` — its items are a copy taken at
   practice start, since `list_items` gets overwritten on every re-fetch of a
   list (`db.save_list`). The `#view-practice-log` screen (opened from the

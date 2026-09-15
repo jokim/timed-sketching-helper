@@ -99,20 +99,38 @@ def test_finish_practice_log_sets_status_and_shown_count(conn):
 
     updated = db_module.finish_practice_log(
         conn, practice_id, db_module.current_account(),
-        status="completed", shown_count=1,
+        status="completed", shown_count=1, elapsed_seconds=42,
     )
 
     assert updated is True
     row = db_module.get_practice_log(conn, practice_id, db_module.current_account())
     assert row["status"] == "completed"
     assert row["shown_count"] == 1
+    assert row["elapsed_seconds"] == 42
     assert row["ended_at"] is not None
 
 
 def test_finish_practice_log_returns_false_for_unknown_id(conn):
     assert db_module.finish_practice_log(
-        conn, 999, db_module.current_account(), status="completed", shown_count=0
+        conn, 999, db_module.current_account(),
+        status="completed", shown_count=0, elapsed_seconds=0,
     ) is False
+
+
+def test_init_db_adds_elapsed_seconds_column_to_existing_practice_log_table(conn):
+    conn.execute("ALTER TABLE practice_log DROP COLUMN elapsed_seconds")
+    conn.commit()
+    columns_before = {
+        row["name"] for row in conn.execute("PRAGMA table_info(practice_log)").fetchall()
+    }
+    assert "elapsed_seconds" not in columns_before
+
+    db_module.init_db(conn)
+
+    columns_after = {
+        row["name"] for row in conn.execute("PRAGMA table_info(practice_log)").fetchall()
+    }
+    assert "elapsed_seconds" in columns_after
 
 
 def test_list_practice_log_orders_newest_first_with_thumb(conn):
@@ -193,15 +211,19 @@ def test_finish_practice_endpoint_updates_status(client):
 
     res = client.patch(
         f"/api/practice-log/{practice_id}",
-        json={"status": "completed", "shown_count": 2},
+        json={"status": "completed", "shown_count": 2, "elapsed_seconds": 65},
     )
 
     assert res.status_code == 200
 
+    entry = client.get(f"/api/practice-log/{practice_id}").json()
+    assert entry["elapsed_seconds"] == 65
+
 
 def test_finish_practice_endpoint_404_for_unknown_id(client):
     res = client.patch(
-        "/api/practice-log/999", json={"status": "completed", "shown_count": 0}
+        "/api/practice-log/999",
+        json={"status": "completed", "shown_count": 0, "elapsed_seconds": 0},
     )
     assert res.status_code == 404
 
@@ -214,7 +236,7 @@ def test_finish_practice_endpoint_rejects_invalid_status(client):
 
     res = client.patch(
         f"/api/practice-log/{practice_id}",
-        json={"status": "bogus", "shown_count": 1},
+        json={"status": "bogus", "shown_count": 1, "elapsed_seconds": 1},
     )
 
     assert res.status_code == 422
@@ -234,6 +256,7 @@ def test_list_practice_log_endpoint_returns_newest_first(client):
     assert [e["id"] for e in entries] == [second, first]
     assert entries[0]["source_url"] == GALLERY_URL
     assert entries[0]["thumb"] is not None
+    assert entries[0]["elapsed_seconds"] is None
 
 
 def test_read_practice_log_endpoint_returns_items(client):
