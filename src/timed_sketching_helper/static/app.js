@@ -680,16 +680,12 @@ async function fetchListStreaming(url, forceRefresh, maxImages, maxRequests, onP
   return result;
 }
 
-$("#start-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const url = $("#url").value.trim();
-  const forceRefresh = $("#force-refresh").checked;
-  const maxImagesRaw = $("#max-images").value.trim();
-  const maxImages = maxImagesRaw ? Math.max(1, Math.floor(Number(maxImagesRaw))) : null;
-  const maxRequestsRaw = $("#max-requests").value.trim();
-  const maxRequests = maxRequestsRaw ? Math.max(1, Math.floor(Number(maxRequestsRaw))) : null;
-  state.count = Number($("#count").value);
-  state.duration = Number($("#duration").value);
+async function beginFromUrl(
+  url,
+  { count, duration, forceRefresh = false, maxImages = null, maxRequests = null },
+) {
+  state.count = count;
+  state.duration = duration;
   const btn = $("#start-btn");
   btn.disabled = true;
   setStartStatus("");
@@ -729,6 +725,23 @@ $("#start-form").addEventListener("submit", async (event) => {
     setFetchProgress(null);
     btn.disabled = false;
   }
+}
+
+$("#start-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const url = $("#url").value.trim();
+  const forceRefresh = $("#force-refresh").checked;
+  const maxImagesRaw = $("#max-images").value.trim();
+  const maxImages = maxImagesRaw ? Math.max(1, Math.floor(Number(maxImagesRaw))) : null;
+  const maxRequestsRaw = $("#max-requests").value.trim();
+  const maxRequests = maxRequestsRaw ? Math.max(1, Math.floor(Number(maxRequestsRaw))) : null;
+  await beginFromUrl(url, {
+    count: Number($("#count").value),
+    duration: Number($("#duration").value),
+    forceRefresh,
+    maxImages,
+    maxRequests,
+  });
 });
 
 // ---- Session --------------------------------------------------------------
