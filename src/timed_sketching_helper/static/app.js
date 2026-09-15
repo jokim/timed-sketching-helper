@@ -1495,8 +1495,19 @@ async function restartPractice(entry) {
   });
 }
 
+async function clearPracticeLog() {
+  if (!window.confirm("Clear your entire practice log? This can't be undone.")) return;
+  try {
+    await fetch("/api/practice-log", { method: "DELETE" });
+  } catch {
+    /* best effort */
+  }
+  if (!views.practiceLog.hidden) loadPracticeLog();
+}
+
 $("#practice-log-btn").addEventListener("click", openPracticeLog);
 $("#log-back-btn").addEventListener("click", () => show("start"));
+$("#log-clear-all-btn").addEventListener("click", clearPracticeLog);
 
 // ---- App-wide settings modal -------------------------------------------
 
@@ -1516,14 +1527,8 @@ document.addEventListener("keydown", (event) => {
 });
 
 $("#clear-practice-log-btn").addEventListener("click", async () => {
-  if (!window.confirm("Clear your entire practice log? This can't be undone.")) return;
-  try {
-    await fetch("/api/practice-log", { method: "DELETE" });
-  } catch {
-    /* best effort */
-  }
+  await clearPracticeLog();
   closeAppSettings();
-  if (!views.practiceLog.hidden) loadPracticeLog();
 });
 
 // ---- Pointer-idle watcher ----------------------------------------------

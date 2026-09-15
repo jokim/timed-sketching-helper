@@ -1185,6 +1185,8 @@ body[data-activity] #controls,
 }
 .log-back:hover { border-color: var(--accent); color: var(--fg); }
 
+.log-clear-all { margin-top: 0; margin-left: auto; }
+
 .log-list {
   list-style: none;
   margin: 0;
