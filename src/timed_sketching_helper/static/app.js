@@ -6,6 +6,7 @@ const views = {
   start: $("#view-start"),
   session: $("#view-session"),
   done: $("#view-done"),
+  practiceLog: $("#view-practice-log"),
 };
 
 function show(name) {
@@ -1331,6 +1332,157 @@ $("#new-btn").addEventListener("click", () => {
   loadAuthStatus();
   show("start");
 });
+
+// ---- Practice log -----------------------------------------------------
+
+function formatLogTimestamp(iso) {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function logStatusLabel(status) {
+  if (status === "completed") return "Completed";
+  if (status === "ended_early") return "Ended early";
+  return "In progress";
+}
+
+function logRow(entry) {
+  const li = document.createElement("li");
+  li.className = "log-row";
+
+  const main = document.createElement("div");
+  main.className = "log-row-main";
+
+  const info = document.createElement("div");
+  info.className = "log-info";
+  const title = document.createElement("div");
+  title.className = "log-title";
+  title.textContent = entry.list_title || entry.source_url;
+  const meta = document.createElement("div");
+  meta.className = "log-meta";
+  const shown =
+    entry.shown_count != null
+      ? `${entry.shown_count}/${entry.count} shown`
+      : `${entry.count} images`;
+  meta.textContent = `${entry.list_kind || "?"} · ${shown} · ${entry.duration}s each · ${formatLogTimestamp(entry.started_at)}`;
+  info.append(title, meta);
+
+  const status = document.createElement("span");
+  status.className = "log-status";
+  status.dataset.status = entry.status;
+  status.textContent = logStatusLabel(entry.status);
+
+  const actions = document.createElement("div");
+  actions.className = "log-row-actions";
+  const restart = document.createElement("button");
+  restart.type = "button";
+  restart.textContent = "Restart";
+  restart.addEventListener("click", () => restartPractice(entry));
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "log-del";
+  del.textContent = "Delete";
+  del.addEventListener("click", () => deleteLogEntry(entry.id, li));
+  actions.append(restart, del);
+
+  main.append(
+    savedThumb({ kind: entry.list_kind, title: entry.list_title, thumb: entry.thumb }),
+    info,
+    status,
+    actions,
+  );
+
+  const expandBtn = document.createElement("button");
+  expandBtn.type = "button";
+  expandBtn.className = "log-expand-btn";
+  expandBtn.textContent = "Show images";
+  const thumbs = document.createElement("div");
+  thumbs.className = "log-thumbs";
+  thumbs.hidden = true;
+  expandBtn.addEventListener("click", async () => {
+    if (!thumbs.hidden) {
+      thumbs.hidden = true;
+      expandBtn.textContent = "Show images";
+      return;
+    }
+    expandBtn.textContent = "Loading…";
+    try {
+      const detail = await api(`/api/practice-log/${entry.id}`);
+      thumbs.innerHTML = "";
+      for (const item of detail.items) {
+        const link = document.createElement("a");
+        const href = externalHref(item.page_url);
+        if (href) {
+          link.href = href;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+        } else {
+          link.href = "#";
+        }
+        link.title = item.title || "";
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.alt = item.title || "";
+        img.src = `/api/images/${encodeURIComponent(item.source_id)}`;
+        img.addEventListener("error", () => img.remove());
+        link.appendChild(img);
+        thumbs.appendChild(link);
+      }
+      thumbs.hidden = false;
+      expandBtn.textContent = "Hide images";
+    } catch {
+      expandBtn.textContent = "Show images";
+    }
+  });
+
+  li.append(main, expandBtn, thumbs);
+  return li;
+}
+
+async function loadPracticeLog() {
+  const list = $("#log-list");
+  list.innerHTML = "";
+  let entries = [];
+  try {
+    entries = await api("/api/practice-log");
+  } catch {
+    /* leave the list empty on failure */
+  }
+  $("#log-empty").hidden = entries.length > 0;
+  for (const entry of entries) list.appendChild(logRow(entry));
+}
+
+async function deleteLogEntry(id, rowEl) {
+  try {
+    await fetch(`/api/practice-log/${id}`, { method: "DELETE" });
+  } catch {
+    /* best effort */
+  }
+  rowEl.remove();
+  if (!$("#log-list").children.length) $("#log-empty").hidden = false;
+}
+
+function openPracticeLog() {
+  show("practiceLog");
+  loadPracticeLog();
+}
+
+async function restartPractice(entry) {
+  show("start");
+  await beginFromUrl(entry.source_url, {
+    count: entry.count,
+    duration: entry.duration,
+  });
+}
+
+$("#practice-log-btn").addEventListener("click", openPracticeLog);
+$("#log-back-btn").addEventListener("click", () => show("start"));
 
 // ---- Pointer-idle watcher ----------------------------------------------
 //
