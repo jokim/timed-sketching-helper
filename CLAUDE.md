@@ -110,16 +110,29 @@ Key design points, each spanning several files:
 
 - **Fetch cap.** `DeviantArtProvider._collect` stops paginating once a list
   reaches `max_images` (from `MAX_IMAGES`, default `config.DEFAULT_MAX_IMAGES`
-  = 300, hard ceiling `config.HARD_MAX_IMAGES` = 1000) — a session shows a
-  handful, so fetching thousands is wasted work. `main._default_resolver`
-  passes `cfg.max_images`;
-  the constructor re-clamps to the ceiling. `list_images(..., max_images=N)`
-  (threaded from the `max_images` field on `POST /api/lists` / `get_list`, set
-  by the "Limit images fetched" advanced option) lowers the cap for one fetch
-  only — `min(N, self._max_images)`, so the config ceiling always wins. A cache
-  hit otherwise ignores `max_images` (no long load to skip), *except* when an
-  explicit `N` exceeds the cached item count — `get_list` reads that as the user
-  raising a previously-lower limit and re-fetches to pull the extra images in.
+  = 300) — a session shows a handful, so fetching thousands is wasted work by
+  default. There is no hard ceiling on `MAX_IMAGES` itself; raise it in `.env`
+  if you need bigger lists, but see the request-cap warning below — each page
+  still costs one upstream API request, so a very large `MAX_IMAGES` can run
+  into DeviantArt's `user_api_threshold` quota well before hitting the image
+  count. `main._default_resolver` passes `cfg.max_images`, which becomes
+  `DeviantArtProvider._max_images` — the **ceiling** a single fetch can never
+  exceed, whatever the "Limit images fetched" advanced option asks for.
+  `list_images(..., max_images=N)` (threaded from the `max_images` field on
+  `POST /api/lists` / `get_list`, set by that advanced option) lowers *or
+  raises* the fetch for one call — `min(N, self._max_images)`, so the
+  `MAX_IMAGES` ceiling always wins. Leaving the field blank (`N` is `None`)
+  doesn't fetch up to that ceiling, though — it stops at
+  `self._default_fetch_images` (`config.DEFAULT_FETCH_IMAGES` = 200, clamped
+  to `self._max_images` in case `MAX_IMAGES` is configured below 200; not
+  itself env-configurable). `MAX_IMAGES` is thus the max a fetch is *allowed*
+  to pull; `DEFAULT_FETCH_IMAGES` is how much it pulls *by default* absent an
+  explicit ask — the "Limit images fetched" field can raise or lower that
+  default anywhere up to the ceiling. A cache hit otherwise ignores
+  `max_images` (no long load to skip), *except* when an explicit `N` — never
+  the implicit 200 default — exceeds the cached item count: `get_list` reads
+  that as the user raising a previously-lower limit and re-fetches to pull the
+  extra images in.
 
 - **Request cap.** `_Progress` also counts upstream API requests and exposes
   `.exhausted`; `_iter_pages` / `_folders` / `_iter_folders` stop paginating
@@ -204,7 +217,14 @@ Key design points, each spanning several files:
   /api/practice-log/{id}` removes one entry; `DELETE /api/practice-log`
   (wired to "Clear practice log" in the new app-wide `#app-settings-modal`,
   distinct from the in-session dock/beep `#settings-modal`) clears all of
-  them for the account.
+  them for the browser. **The log is keyed by the per-browser `session_id`
+  (`_current_session_id()`), not `db.current_account()`** — like
+  `deviantart_oauth`, this was switched from the shared account id so one
+  browser's practice history can never leak to another
+  (`db._migrate_practice_log_to_session_keying` drops an old account-keyed
+  table on `init_db()`, the same pattern as
+  `_migrate_deviantart_oauth_to_session_keying`; there's no way to attribute
+  old rows to a browser, so they're just dropped rather than migrated).
 
 - **Countdown beep.** `restartTicker()`'s per-second interval calls `playBeep()`
   for the final `BEEP_WINDOW` (5) seconds of an image's timer — a short sine
@@ -226,8 +246,10 @@ Key design points, each spanning several files:
   starts the ticker. A monotonic `renderToken` guards against a slow load
   resolving after the user has already moved on (prev/skip/reroll).
 
-- **`db.py` threads `account_id` through every query.** `current_account()` is
+- **`db.py` threads `account_id` through most queries.** `current_account()` is
   hard-coded to `1`; it is the single seam where real multi-user auth would plug in.
+  `deviantart_oauth` and `practice_log` are the exceptions — see the login and
+  practice-log bullets below for why they're keyed by `session_id` instead.
 
 - **DeviantArt login is isolated per browser via a session cookie — the
   server never shares one browser's DeviantArt account with another.**
@@ -241,8 +263,9 @@ Key design points, each spanning several files:
   on `DeviantArtOAuth`) is keyed by that `session_id`, not by
   `db.current_account()` — the DeviantArt `client_secret` still never leaves
   the server, but which browser's tokens a request can see is now scoped to
-  that browser's own cookie instead of one global slot. (List caching,
-  `recent`, prefs, and the practice log are unrelated to login and stay keyed
+  that browser's own cookie instead of one global slot. The practice log
+  (below) is keyed by the same `session_id` for the same reason. (List
+  caching, `recent`, and prefs are unrelated to login/identity and stay keyed
   by the shared `current_account()`, unchanged.)
 
 - **DeviantArt user login lives in `sources/deviantart_oauth.py` + the

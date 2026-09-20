@@ -1,4 +1,8 @@
-from timed_sketching_helper.config import load_config
+from timed_sketching_helper.config import DEFAULT_FETCH_IMAGES, load_config
+
+
+def test_default_fetch_images_is_200():
+    assert DEFAULT_FETCH_IMAGES == 200
 
 
 def test_max_images_defaults_to_300(monkeypatch):
@@ -11,9 +15,9 @@ def test_max_images_reads_env(monkeypatch):
     assert load_config().max_images == 200
 
 
-def test_max_images_is_hard_capped_at_1000(monkeypatch):
+def test_max_images_has_no_hard_ceiling(monkeypatch):
     monkeypatch.setenv("MAX_IMAGES", "5000")
-    assert load_config().max_images == 1000
+    assert load_config().max_images == 5000
 
 
 def test_max_requests_defaults_to_100(monkeypatch):

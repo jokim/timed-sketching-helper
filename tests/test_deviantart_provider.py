@@ -189,9 +189,29 @@ async def test_list_images_stops_at_max_images_without_fetching_more_pages():
     assert route.call_count == 3  # 24 + 24 + 2, then stop; page 4 never requested
 
 
-async def test_max_images_is_hard_capped_at_1000():
-    assert DeviantArtProvider("id", "secret", max_images=99999)._max_images == 1000
-    assert DeviantArtProvider("id", "secret")._max_images == 1000
+async def test_max_images_has_no_hard_ceiling():
+    assert DeviantArtProvider("id", "secret", max_images=99999)._max_images == 99999
+    assert DeviantArtProvider("id", "secret")._max_images == 300
+
+
+async def test_default_fetch_images_is_200_clamped_to_the_ceiling():
+    assert DeviantArtProvider("id", "secret")._default_fetch_images == 200
+    assert DeviantArtProvider("id", "secret", max_images=50)._default_fetch_images == 50
+
+
+@respx.mock
+async def test_list_images_without_max_images_argument_stops_at_the_default_not_the_ceiling():
+    _token_route(respx.mock)
+    route = respx.mock.get(url__startswith=f"{API_BASE}/gallery/all")
+    route.side_effect = _page_by_offset()
+
+    # Ceiling is 500, well above the 200 default; leaving the max_images
+    # argument unset should stop at the default, not page all the way up.
+    images = await DeviantArtProvider("id", "secret", max_images=500).list_images(
+        gallery_ref()
+    )
+
+    assert len(images) == 200
 
 
 @respx.mock

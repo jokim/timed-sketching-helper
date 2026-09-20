@@ -2,10 +2,11 @@
 
 Most queries take an ``account_id``. v1 always passes ``DEFAULT_ACCOUNT_ID``
 (see ``current_account``); that function is the single seam for real
-multi-user support later. DeviantArt OAuth tokens are the exception: they're
-keyed by a per-browser ``session_id`` instead (see
-``sources/deviantart_oauth.py``), since sharing one account's login across
-every browser that hits the server is exactly the bug that keying broke.
+multi-user support later. DeviantArt OAuth tokens and the practice log are
+the exceptions: they're keyed by a per-browser ``session_id`` instead (see
+``sources/deviantart_oauth.py`` and the practice-log functions below), since
+sharing one account's login or drawing history across every browser that
+hits the server is exactly the bug that keying broke.
 """
 
 from __future__ import annotations
@@ -64,7 +65,7 @@ CREATE TABLE IF NOT EXISTS preferences (
 
 CREATE TABLE IF NOT EXISTS practice_log (
     id          INTEGER PRIMARY KEY,
-    account_id  INTEGER NOT NULL REFERENCES accounts(id),
+    session_id  TEXT NOT NULL,
     source_url  TEXT NOT NULL,
     list_title  TEXT NOT NULL,
     list_kind   TEXT NOT NULL,
@@ -143,6 +144,23 @@ def _migrate_deviantart_oauth_to_session_keying(conn: sqlite3.Connection) -> Non
         conn.commit()
 
 
+def _migrate_practice_log_to_session_keying(conn: sqlite3.Connection) -> None:
+    """``practice_log`` used to be keyed by the single global account id, so
+    every browser shared one practice history. It's now keyed by a
+    per-browser session id instead, like ``deviantart_oauth`` already is. An
+    old-schema table just gets dropped (cascading to ``practice_log_items``)
+    — the rows couldn't be attributed to any one browser anyway, since they
+    were all recorded under the same shared account id."""
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(practice_log)").fetchall()
+    }
+    if columns and "session_id" not in columns:
+        conn.execute("DROP TABLE IF EXISTS practice_log_items")
+        conn.execute("DROP TABLE practice_log")
+        conn.commit()
+
+
 def _migrate_practice_log_add_elapsed_seconds(conn: sqlite3.Connection) -> None:
     """``practice_log`` predates the ``elapsed_seconds`` column; add it to any
     table created before this column existed. ``CREATE TABLE IF NOT EXISTS``
@@ -159,6 +177,7 @@ def _migrate_practice_log_add_elapsed_seconds(conn: sqlite3.Connection) -> None:
 
 def init_db(conn: sqlite3.Connection) -> None:
     _migrate_deviantart_oauth_to_session_keying(conn)
+    _migrate_practice_log_to_session_keying(conn)
     conn.executescript(SCHEMA)
     _migrate_practice_log_add_elapsed_seconds(conn)
     conn.execute(
@@ -395,7 +414,7 @@ def set_preferences(
 
 def create_practice_log(
     conn: sqlite3.Connection,
-    account_id: int,
+    session_id: str,
     *,
     source_url: str,
     list_title: str,
@@ -406,9 +425,9 @@ def create_practice_log(
 ) -> int:
     cursor = conn.execute(
         "INSERT INTO practice_log"
-        " (account_id, source_url, list_title, list_kind, count, duration, started_at, status)"
+        " (session_id, source_url, list_title, list_kind, count, duration, started_at, status)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress')",
-        (account_id, source_url, list_title, list_kind, count, duration, _now()),
+        (session_id, source_url, list_title, list_kind, count, duration, _now()),
     )
     practice_id = int(cursor.lastrowid)
     conn.executemany(
@@ -427,7 +446,7 @@ def create_practice_log(
 def finish_practice_log(
     conn: sqlite3.Connection,
     practice_id: int,
-    account_id: int,
+    session_id: str,
     *,
     status: str,
     shown_count: int,
@@ -435,32 +454,32 @@ def finish_practice_log(
 ) -> bool:
     cursor = conn.execute(
         "UPDATE practice_log SET status = ?, shown_count = ?, elapsed_seconds = ?, ended_at = ?"
-        " WHERE id = ? AND account_id = ?",
-        (status, shown_count, elapsed_seconds, _now(), practice_id, account_id),
+        " WHERE id = ? AND session_id = ?",
+        (status, shown_count, elapsed_seconds, _now(), practice_id, session_id),
     )
     conn.commit()
     return cursor.rowcount > 0
 
 
 def list_practice_log(
-    conn: sqlite3.Connection, account_id: int, limit: int = 200
+    conn: sqlite3.Connection, session_id: str, limit: int = 200
 ) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT pl.*, ("
         "  SELECT source_id FROM practice_log_items"
         "  WHERE practice_log_id = pl.id AND position = 0"
         ") AS thumb"
-        " FROM practice_log pl WHERE account_id = ? ORDER BY started_at DESC LIMIT ?",
-        (account_id, limit),
+        " FROM practice_log pl WHERE session_id = ? ORDER BY started_at DESC LIMIT ?",
+        (session_id, limit),
     ).fetchall()
 
 
 def get_practice_log(
-    conn: sqlite3.Connection, practice_id: int, account_id: int
+    conn: sqlite3.Connection, practice_id: int, session_id: str
 ) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT * FROM practice_log WHERE id = ? AND account_id = ?",
-        (practice_id, account_id),
+        "SELECT * FROM practice_log WHERE id = ? AND session_id = ?",
+        (practice_id, session_id),
     ).fetchone()
 
 
@@ -473,16 +492,16 @@ def practice_log_items(conn: sqlite3.Connection, practice_id: int) -> list[sqlit
 
 
 def delete_practice_log(
-    conn: sqlite3.Connection, practice_id: int, account_id: int
+    conn: sqlite3.Connection, practice_id: int, session_id: str
 ) -> bool:
     cursor = conn.execute(
-        "DELETE FROM practice_log WHERE id = ? AND account_id = ?",
-        (practice_id, account_id),
+        "DELETE FROM practice_log WHERE id = ? AND session_id = ?",
+        (practice_id, session_id),
     )
     conn.commit()
     return cursor.rowcount > 0
 
 
-def clear_practice_log(conn: sqlite3.Connection, account_id: int) -> None:
-    conn.execute("DELETE FROM practice_log WHERE account_id = ?", (account_id,))
+def clear_practice_log(conn: sqlite3.Connection, session_id: str) -> None:
+    conn.execute("DELETE FROM practice_log WHERE session_id = ?", (session_id,))
     conn.commit()

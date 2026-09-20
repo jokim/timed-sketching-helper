@@ -10,7 +10,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
-from timed_sketching_helper.config import HARD_MAX_IMAGES, HARD_MAX_REQUESTS
+from timed_sketching_helper.config import (
+    DEFAULT_FETCH_IMAGES,
+    DEFAULT_MAX_IMAGES,
+    HARD_MAX_REQUESTS,
+)
 from timed_sketching_helper.models import ImageMeta, SourceRef
 from timed_sketching_helper.sources.base import ProgressCallback
 
@@ -170,14 +174,25 @@ class DeviantArtProvider:
         client_secret: str = "",
         *,
         user_token: UserTokenProvider | None = None,
-        max_images: int = HARD_MAX_IMAGES,
+        max_images: int = DEFAULT_MAX_IMAGES,
         max_requests: int = HARD_MAX_REQUESTS,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         # Stop fetching once a list reaches this many images — a session only
-        # ever shows a handful. Clamped to HARD_MAX_IMAGES whatever is passed.
-        self._max_images = max(1, min(max_images, HARD_MAX_IMAGES))
+        # ever shows a handful. No hard ceiling: MAX_IMAGES is trusted as
+        # configured. Raise it with care, though — every page of results
+        # costs one upstream API request against DeviantArt's
+        # `user_api_threshold` quota (see HARD_MAX_REQUESTS / _get), so a
+        # very large MAX_IMAGES on a mostly-sensitive gallery can still burn
+        # through that quota before the image count even gets close.
+        self._max_images = max(1, max_images)
+        # How many images a fetch pulls when the caller doesn't ask for a
+        # specific amount (list_images(max_images=None)) — distinct from
+        # self._max_images above, which is the ceiling a caller can still
+        # raise a fetch up to via the max_images argument. Clamped to that
+        # ceiling in case an operator has configured MAX_IMAGES below 200.
+        self._default_fetch_images = max(1, min(DEFAULT_FETCH_IMAGES, self._max_images))
         # Default cap on upstream API requests per fetch. The per-fetch
         # `max_requests` argument to list_images() raises this (up to
         # HARD_MAX_REQUESTS) — unlike max_images, which only ever clamps down.
@@ -308,9 +323,10 @@ class DeviantArtProvider:
         if max_requests is not None:
             request_cap = max(1, min(max_requests, HARD_MAX_REQUESTS))
         progress = _Progress(on_progress, request_cap)
-        # A caller may ask for fewer images to skip a long load; the configured
-        # ceiling still wins.
-        cap = self._max_images
+        # Absent an explicit ask, fetch the default amount rather than paging
+        # all the way to the configured ceiling. A caller may ask for more or
+        # fewer images; the ceiling still wins either way.
+        cap = self._default_fetch_images
         if max_images is not None:
             cap = max(1, min(max_images, self._max_images))
         async with httpx.AsyncClient(

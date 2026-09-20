@@ -16,14 +16,28 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Never fetch more than this many images for a single list, whatever MAX_IMAGES
-# says. A session only ever shows a handful; a few hundred is plenty of variety.
-HARD_MAX_IMAGES = 1000
-
-# Default cap on images fetched for a single list, absent MAX_IMAGES / the
-# "Limit images fetched" advanced option. Lower than HARD_MAX_IMAGES so a
-# fresh fetch doesn't wait on a huge gallery by default.
+# Fallback for MAX_IMAGES itself when that env var is unset/invalid — i.e.
+# the ceiling on images fetched for a single list, absent any configured
+# MAX_IMAGES.
+#
+# There is no hard ceiling here anymore — MAX_IMAGES fully controls how many
+# images a single list fetch will pull. Raise it with care: DeviantArt's API
+# enforces a per-account/per-app request quota (surfaced as
+# `user_api_threshold`, see DeviantArtRateLimitError), and each page of
+# results costs one request. Aim to stay at or below a few thousand images
+# per fetch (comfortably under HARD_MAX_REQUESTS * ~10 items/page) so a
+# single list doesn't burn through the whole quota by itself.
 DEFAULT_MAX_IMAGES = 300
+
+# How many images a fetch pulls when neither MAX_IMAGES nor the "Limit images
+# fetched" advanced option asks for a specific amount — distinct from
+# DEFAULT_MAX_IMAGES above (MAX_IMAGES's own fallback, i.e. the *ceiling*
+# absent config). A session only ever shows a handful, so this stays modest
+# even though MAX_IMAGES may be configured much higher; the "Limit images
+# fetched" field can still raise a single fetch up to that ceiling. Not itself
+# env-configurable — DeviantArtProvider clamps it to MAX_IMAGES whatever it's
+# set to.
+DEFAULT_FETCH_IMAGES = 200
 
 # Stop a single list fetch after this many upstream API requests. Unlike
 # MAX_IMAGES this is a *default*, not a ceiling — a big album that is mostly
@@ -43,7 +57,7 @@ def _as_max_images(value: str | None) -> int:
         n = int(value) if value is not None else DEFAULT_MAX_IMAGES
     except ValueError:
         n = DEFAULT_MAX_IMAGES
-    return max(1, min(n, HARD_MAX_IMAGES))
+    return max(1, n)
 
 
 def _as_max_requests(value: str | None) -> int:

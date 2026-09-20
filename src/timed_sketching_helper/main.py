@@ -436,7 +436,7 @@ def create_app(
         try:
             practice_id = db.create_practice_log(
                 conn,
-                db.current_account(),
+                _current_session_id(),
                 source_url=image_list.source_url,
                 list_title=image_list.title,
                 list_kind=image_list.kind,
@@ -460,7 +460,7 @@ def create_app(
         updated = db.finish_practice_log(
             conn,
             practice_id,
-            db.current_account(),
+            _current_session_id(),
             status=body.status,
             shown_count=body.shown_count,
             elapsed_seconds=body.elapsed_seconds,
@@ -472,13 +472,13 @@ def create_app(
     @app.get("/api/practice-log")
     async def list_practice_log_entries(limit: int = 200) -> list[dict]:
         rows = db.list_practice_log(
-            conn, db.current_account(), limit=min(max(limit, 1), 1000)
+            conn, _current_session_id(), limit=min(max(limit, 1), 1000)
         )
         return [_practice_log_dto(r, thumb=r["thumb"]) for r in rows]
 
     @app.get("/api/practice-log/{practice_id}")
     async def read_practice_log_entry(practice_id: int) -> dict:
-        row = db.get_practice_log(conn, practice_id, db.current_account())
+        row = db.get_practice_log(conn, practice_id, _current_session_id())
         if row is None:
             raise HTTPException(404, "Practice log entry not found.")
         items = db.practice_log_items(conn, practice_id)
@@ -498,14 +498,14 @@ def create_app(
 
     @app.delete("/api/practice-log/{practice_id}")
     async def delete_practice_log_entry(practice_id: int) -> Response:
-        deleted = db.delete_practice_log(conn, practice_id, db.current_account())
+        deleted = db.delete_practice_log(conn, practice_id, _current_session_id())
         if not deleted:
             raise HTTPException(404, "Practice log entry not found.")
         return Response(status_code=204)
 
     @app.delete("/api/practice-log")
     async def clear_practice_log_entries() -> Response:
-        db.clear_practice_log(conn, db.current_account())
+        db.clear_practice_log(conn, _current_session_id())
         return Response(status_code=204)
 
     @app.post("/api/precache")
